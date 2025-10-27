@@ -26,7 +26,13 @@ captures/
 
 # Logs and dumps
 *.log
+# logcat 系列（含以点开头的文件名）
+logcat*.txt
 logcat-*.txt
+.logcat*.txt
+# 本地构建日志
+buildlog*.txt
+# 其他运行时产物
 *.pid
 uidump.xml
 window_dump.xml
