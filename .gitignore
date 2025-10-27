@@ -1,0 +1,36 @@
+# Android/Gradle
+.gradle/
+build/
+**/build/
+**/outputs/
+**/tmp/
+**/snapshot/
+
+# Local SDK and tools (environment-specific)
+.android-sdk/
+.tools/
+
+# Local configuration
+local.properties
+
+# IDE
+*.iml
+.idea/
+
+# Native build
+.externalNativeBuild/
+.cxx/
+
+# Captures and previews (screenshots)
+captures/
+
+# Logs and dumps
+*.log
+logcat-*.txt
+*.pid
+uidump.xml
+window_dump.xml
+
+# OS files
+.DS_Store
+Thumbs.db

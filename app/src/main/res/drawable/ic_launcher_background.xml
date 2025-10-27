@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <!-- 蓝色背景，接近你提供的图标底色 -->
+    <solid android:color="#2D87F0" />
+</shape>
