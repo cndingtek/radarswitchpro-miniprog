@@ -57,6 +57,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,6 +103,8 @@ fun RadarLinkApp() {
     val distanceSeries = remember { mutableStateListOf<DistancePoint>() }
     val eventLogs = remember { mutableStateListOf<String>() }
     val rawBleLines = remember { mutableStateListOf<String>() }
+    var rawBuf by remember { mutableStateOf("") }
+    var rawBleTick by remember { mutableStateOf(0) }
     var currentGatt by remember { mutableStateOf<BluetoothGatt?>(null) }
     val context = LocalContext.current
     val sp = remember { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE) }
@@ -155,7 +159,9 @@ fun RadarLinkApp() {
                             val idx = pairedDevices.indexOfFirst { it.mac == gatt.device.address }
                             if (idx >= 0) {
                                 val p0 = pairedDevices[idx]
-                                pairedDevices[idx] = p0.copy(online = true, lastConnectedMs = System.currentTimeMillis())
+                                val realName = try { gatt.device.name } catch (_: Exception) { null }
+                                val useName = if (!realName.isNullOrBlank()) realName else p0.name
+                                pairedDevices[idx] = p0.copy(name = useName, online = true, lastConnectedMs = System.currentTimeMillis())
                                 savePairedToPrefs()
                             }
                         }
@@ -164,12 +170,41 @@ fun RadarLinkApp() {
                             val idx = pairedDevices.indexOfFirst { it.mac == gatt.device.address }
                             if (idx >= 0) {
                                 val p0 = pairedDevices[idx]
-                                pairedDevices[idx] = p0.copy(online = false, lastConnectedMs = System.currentTimeMillis())
+                                val realName = try { gatt.device.name } catch (_: Exception) { null }
+                                val useName = if (!realName.isNullOrBlank()) realName else p0.name
+                                pairedDevices[idx] = p0.copy(name = useName, online = false, lastConnectedMs = System.currentTimeMillis())
                                 savePairedToPrefs()
                             }
                             autoConnections.remove(gatt.device.address)
                             try { gatt.close() } catch (_: Exception) {}
                         }
+                    }
+                    override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                        if (status == BluetoothGatt.GATT_SUCCESS) {
+                            try {
+                                gatt.services?.forEach { svc ->
+                                    svc.characteristics?.forEach { ch ->
+                                        val props = ch.properties
+                                        val notify = (props and android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0
+                                        val indicate = (props and android.bluetooth.BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0
+                                        if (notify || indicate) {
+                                            try {
+                                                gatt.setCharacteristicNotification(ch, true)
+                                                val ccc = ch.getDescriptor(java.util.UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+                                                if (ccc != null) {
+                                                    ccc.value = if (notify) android.bluetooth.BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else android.bluetooth.BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                                                    gatt.writeDescriptor(ccc)
+                                                }
+                                            } catch (_: Exception) {}
+                                        }
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                    override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: android.bluetooth.BluetoothGattCharacteristic) {
+                        // 避免与当前会话的 GATT 重复记录原始BLE，统一由 ScanScreen 的回调处理
+                        return
                     }
                 })
                 if (gatt != null) autoConnections[pd.mac] = gatt
@@ -208,20 +243,32 @@ fun RadarLinkApp() {
                     onGattChanged = { g -> currentGatt = g },
                     onRssi = { v -> rssiSeries.add(RssiPoint(System.currentTimeMillis(), v)) },
                     onLogEvent = { msg ->
-                        eventLogs.add(0, msg)
+                        // 统一入口简单去重：避免连续重复文案刷屏
+                        if (eventLogs.firstOrNull() != msg) eventLogs.add(0, msg)
                         val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
                         while (eventLogs.size > limit) eventLogs.removeLast()
                     },
                     onRawBle = { raw ->
-                        val t = raw.trim()
-                        if (t.isNotEmpty()) {
-                            // 避免同一瞬间重复的原始行（例如设备多个特征或重复通知）
-                            val last = rawBleLines.firstOrNull()?.trim()
-                            val isDup = last != null && last.equals(t, ignoreCase = true)
-                            if (!isDup) rawBleLines.add(0, t)
-                            val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
-                            while (rawBleLines.size > limit) rawBleLines.removeLast()
+                        // 使用缓冲，严格按换行边界(\r\n/\n)推送完整行；过滤空行与连续重复
+                        rawBuf += raw
+                        // 统一换行为 \n，保留未结束片段在缓冲中
+                        rawBuf = rawBuf.replace("\r\n", "\n").replace('\r', '\n')
+                        var idx = rawBuf.indexOf('\n')
+                        var addedCount = 0
+                        while (idx >= 0) {
+                            val line = rawBuf.substring(0, idx)
+                            rawBuf = rawBuf.substring(idx + 1)
+                            val t = line.trim()
+                            if (t.isNotEmpty()) {
+                                val entry = "$t\r\n"
+                                val last = rawBleLines.firstOrNull()?.trim()
+                                if (last != t) { rawBleLines.add(0, entry); addedCount++ }
+                            }
+                            idx = rawBuf.indexOf('\n')
                         }
+                        val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
+                        while (rawBleLines.size > limit) rawBleLines.removeLast()
+                        if (addedCount > 0) rawBleTick += addedCount
                     },
                     onDistance = { m ->
                         val now = System.currentTimeMillis()
@@ -262,7 +309,26 @@ fun RadarLinkApp() {
                     onSelectedChange = { selectedPairedIndex = it },
                     distanceSeries = distanceSeries,
                     eventLogs = eventLogs,
-                    rawBle = rawBleLines
+                    rawBleTick = rawBleTick,
+                    rawBle = rawBleLines,
+                    gatt = currentGatt,
+                    onLogEvent = { msg ->
+                        eventLogs.add(0, msg)
+                        val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
+                        while (eventLogs.size > limit) eventLogs.removeLast()
+                    },
+                    onDistance = { m ->
+                        val now = System.currentTimeMillis()
+                        distanceSeries.add(DistancePoint(now, m))
+                        val winSec = try { sp.getInt("rssi_window", 180) } catch (_: Exception) { 180 }
+                        val cutoff = now - winSec * 1000L
+                        while (distanceSeries.isNotEmpty() && distanceSeries.first().t < cutoff) {
+                            distanceSeries.removeAt(0)
+                        }
+                        if (distanceSeries.size > 2000) {
+                            repeat(distanceSeries.size - 2000) { distanceSeries.removeAt(0) }
+                        }
+                    }
                 )
                 is TopTab.Settings -> SettingsScreen(lang = appLang, onLanguageChanged = { code -> appLang = code; try { sp.edit().putString("language", code).apply() } catch (_: Exception) {} })
             }
@@ -415,7 +481,7 @@ fun SettingsScreen(lang: String, onLanguageChanged: (String) -> Unit) {
     val sp = remember { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE) }
     var autoReconnect by remember { mutableStateOf(sp.getBoolean("auto_reconnect", true)) }
     var rssiWindow by remember { mutableStateOf(sp.getInt("rssi_window", 180)) }
-    var logLimit by remember { mutableStateOf(sp.getInt("log_limit", 5)) }
+    var logLimit by remember { mutableStateOf(sp.getInt("log_limit", 20)) }
     var language by remember { mutableStateOf(sp.getString("language", "zh") ?: "zh") }
     val chipColors = FilterChipDefaults.filterChipColors(
         containerColor = Color.Transparent,
@@ -558,6 +624,7 @@ fun ScanScreen(
     onDistance: (Float?) -> Unit
 ) {
     val context = LocalContext.current
+    val sp = remember { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE) }
     val bluetoothManager = remember { context.getSystemService(BluetoothManager::class.java) }
     val adapter: BluetoothAdapter? = bluetoothManager?.adapter
     val scanner: BluetoothLeScanner? = adapter?.bluetoothLeScanner
@@ -572,13 +639,22 @@ fun ScanScreen(
     var pendingOn by remember { mutableStateOf(false) }
     var loggedOff by remember { mutableStateOf(false) }
     var loggedOn by remember { mutableStateOf(false) }
+    // 运动状态与单次断线标记：仅在由“有运动”切换到“无运动”时插入一次空点以断开曲线
+    var motionActive by remember { mutableStateOf(false) }
+    var gapAdded by remember { mutableStateOf(false) }
 
     fun handleLine(line: String) {
         val t = line.trim(); if (t.isEmpty()) return
         if (t.equals("OFF", true)) {
+            // 按运动状态切换判定无运动，避免依赖 loggedOff 标记导致漏记
             pendingOn = false
-            if (!loggedOff) { onLogEvent(tr(lang, "未检测到运动", "No motion detected")); loggedOff = true; loggedOn = false }
-            onDistance(null)
+            if (motionActive) {
+                onLogEvent(tr(lang, "未检测到运动", "No motion detected"))
+                if (!gapAdded) { onDistance(null); gapAdded = true }
+            }
+            motionActive = false
+            loggedOn = false
+            loggedOff = true
             return
         }
         if (t.equals("ON", true)) {
@@ -587,6 +663,9 @@ fun ScanScreen(
                 if (mm != null) { val m = mm / 1000f; onLogEvent(tr(lang, "检测到运动，距离 ${String.format("%.2f", m)} 米。", "Motion detected, distance ${String.format("%.2f", m)} m.")); loggedOn = true; loggedOff = false; pendingOn = false }
                 else pendingOn = true
             }
+            motionActive = true
+            gapAdded = false
+            loggedOff = false
             return
         }
         val rangePrefix = "Range "
@@ -597,7 +676,7 @@ fun ScanScreen(
                 val previous = lastRangeMm
                 lastRangeMm = mmParsed
                 val m = mmParsed / 1000f
-                onDistance(m)
+                if (motionActive) onDistance(m)
                 if (pendingOn && !loggedOn) { onLogEvent(tr(lang, "检测到运动，距离 ${String.format("%.2f", m)} 米。", "Motion detected, distance ${String.format("%.2f", m)} m.")); loggedOn = true; loggedOff = false; pendingOn = false }
                 // 若一直处于运动状态，距离变化也记录日志
                 if (loggedOn && previous != null && previous != mmParsed) {
@@ -618,12 +697,16 @@ fun ScanScreen(
                     connectedMac = gatt.device.address
                     onGattChanged(gatt)
                     try { gatt.discoverServices() } catch (_: Exception) {}
-                    onPaired(PairedDevice(nameGuess, mac, online = true, lastConnectedMs = System.currentTimeMillis()))
+                    val realName = try { gatt.device.name } catch (_: Exception) { null }
+                    val useName = if (!realName.isNullOrBlank()) realName!! else nameGuess
+                    onPaired(PairedDevice(useName, mac, online = true, lastConnectedMs = System.currentTimeMillis()))
                 }
                 if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     if (connectedMac == gatt.device.address) connectedMac = null
                     onGattChanged(null)
-                    onPaired(PairedDevice(nameGuess, mac, online = false, lastConnectedMs = System.currentTimeMillis()))
+                    val realName = try { gatt.device.name } catch (_: Exception) { null }
+                    val useName = if (!realName.isNullOrBlank()) realName!! else nameGuess
+                    onPaired(PairedDevice(useName, mac, online = false, lastConnectedMs = System.currentTimeMillis()))
                 }
             }
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
@@ -653,6 +736,15 @@ fun ScanScreen(
             override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: android.bluetooth.BluetoothGattCharacteristic) {
                 val chunk = try { String(characteristic.value ?: ByteArray(0)) } catch (_: Exception) { "" }
                 if (chunk.isNotEmpty()) onRawBle(chunk)
+                // 暂停运动/距离解析：只记录原始BLE，不解析ON/OFF/Range
+                val paused = try { sp.getBoolean("pause_motion", false) } catch (_: Exception) { false }
+                // 如需清空接收缓冲区，执行一次
+                val needClear = try { sp.getBoolean("clear_incoming", false) } catch (_: Exception) { false }
+                if (needClear) {
+                    incomingBuf = ""
+                    try { sp.edit().putBoolean("clear_incoming", false).apply() } catch (_: Exception) {}
+                }
+                if (paused) return
                 incomingBuf += chunk
                 var idx = incomingBuf.indexOf("\r\n")
                 while (idx >= 0) { val line = incomingBuf.substring(0, idx); handleLine(line); incomingBuf = incomingBuf.substring(idx + 2); idx = incomingBuf.indexOf("\r\n") }
@@ -740,9 +832,21 @@ fun ParamsScreen(
     onSelectedChange: (Int) -> Unit,
     distanceSeries: List<DistancePoint>,
     eventLogs: List<String>,
-    rawBle: List<String>
+    rawBleTick: Int,
+    rawBle: List<String>,
+    gatt: BluetoothGatt?,
+    onLogEvent: (String) -> Unit,
+    onDistance: (Float?) -> Unit
 ) {
+    val context = LocalContext.current
+    val sp = remember { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE) }
     var seg by remember { mutableStateOf(0) } // 0: 参数配置, 1: 日志与监控
+    // 进入“日志与监控”时恢复运动/记录解析
+    LaunchedEffect(seg) {
+        if (seg == 1) {
+            try { sp.edit().putBoolean("pause_motion", false).apply() } catch (_: Exception) {}
+        }
+    }
     // 顶部设备信息（支持横向滑动选择）
     SectionCard(title = tr(lang, "设备信息", "Device Info")) {
         if (pairedDevices.isEmpty()) {
@@ -805,7 +909,7 @@ fun ParamsScreen(
     Spacer(Modifier.height(10.dp))
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         if (seg == 0) {
-            ParamsConfigContent(lang = lang)
+            ParamsConfigContent(lang = lang, gatt = gatt, rawBle = rawBle, rawBleTick = rawBleTick, onLogEvent = onLogEvent)
         } else {
             SectionCard(title = tr(lang, "日志与监控", "Logs & Monitor")) {
                 val sel = pairedDevices.getOrNull(selectedIndex)
@@ -817,6 +921,122 @@ fun ParamsScreen(
                         ) { Text(if (sel.online) tr(lang, "在线", "Online") else tr(lang, "离线", "Offline"), color = Color.White, fontSize = 12.sp) }
                     }
                     Spacer(Modifier.height(8.dp))
+                    // 设备名驱动的运动/距离解析（DC590/DC591 解析 Range/ON/OFF，其它解析 0 或 1,114cm,103）
+                    var monBuf by remember { mutableStateOf("") }
+                    var lastTick by remember { mutableStateOf(0) }
+                    var lastRangeMm by remember { mutableStateOf<Int?>(null) }
+                    var pendingOn by remember { mutableStateOf(false) }
+                    var loggedOff by remember { mutableStateOf(false) }
+                    var loggedOn by remember { mutableStateOf(false) }
+                    // 运动状态与单次断线标记：切到无运动时仅插入一次空点以断开曲线
+                    var motionActive by remember { mutableStateOf(false) }
+                    var gapAdded by remember { mutableStateOf(false) }
+
+                    fun addEvent(msg: String) { onLogEvent(msg) }
+
+                    fun handleMonLine(line: String) {
+                        val t = line.trim(); if (t.isEmpty()) return
+                        val nameLower = sel.name.lowercase()
+                        val isDc = nameLower.contains("dc590") || nameLower.contains("dc591")
+                        if (isDc) {
+                            if (t.equals("OFF", true)) {
+                                pendingOn = false
+                                // 依据运动状态切换记录无运动，并插入一次断点
+                                if (motionActive) {
+                                    addEvent(tr(lang, "未检测到运动", "No motion detected"))
+                                    if (!gapAdded) { onDistance(null); gapAdded = true }
+                                }
+                                motionActive = false
+                                loggedOn = false
+                                loggedOff = true
+                                return
+                            }
+                            if (t.equals("ON", true)) {
+                                val mm = lastRangeMm
+                                if (!loggedOn) {
+                                    if (mm != null) { val m = mm / 1000f; addEvent(tr(lang, "检测到运动，距离 ${String.format("%.2f", m)} 米。", "Motion detected, distance ${String.format("%.2f", m)} m.")); loggedOn = true; loggedOff = false; pendingOn = false }
+                                    else pendingOn = true
+                                }
+                                motionActive = true
+                                gapAdded = false
+                                loggedOff = false
+                                return
+                            }
+                            val rangePrefix = "Range "
+                            if (t.startsWith(rangePrefix)) {
+                                val numStr = t.removePrefix(rangePrefix).trim().takeWhile { it.isDigit() }
+                                val mmParsed = numStr.toIntOrNull()
+                                if (mmParsed != null) {
+                                    val previous = lastRangeMm
+                                    lastRangeMm = mmParsed
+                                    val m = mmParsed / 1000f
+                                    // 图表：更新距离（米）
+                                    if (motionActive) onDistance(m)
+                                    if (pendingOn && !loggedOn) { addEvent(tr(lang, "检测到运动，距离 ${String.format("%.2f", m)} 米。", "Motion detected, distance ${String.format("%.2f", m)} m.")); loggedOn = true; loggedOff = false; pendingOn = false }
+                                    if (loggedOn && previous != null && previous != mmParsed) { addEvent(tr(lang, "目标距离变化至 ${String.format("%.2f", m)} 米。", "Target distance changed to ${String.format("%.2f", m)} m.")) }
+                                }
+                            }
+                        } else {
+                            // 其它设备：0 表示无运动；1,114cm,103 表示有运动和距离（忽略能量值）
+                            if (t == "0") {
+                                // 依据运动状态切换记录无运动，并插入一次断点
+                                if (motionActive) {
+                                    addEvent(tr(lang, "未检测到运动", "No motion detected"))
+                                    if (!gapAdded) { onDistance(null); gapAdded = true }
+                                }
+                                motionActive = false
+                                loggedOn = false
+                                loggedOff = true
+                                return
+                            }
+                            val rx = Regex("^1,\\s*([0-9]+)cm,\\s*([0-9]+)")
+                            val m = rx.find(t)
+                            if (m != null) {
+                                val cm = m.groupValues.getOrNull(1)?.toIntOrNull()
+                                if (cm != null) {
+                                    lastRangeMm = cm * 10
+                                    val meters = cm / 100f
+                                    // 首次测距行直接视为“有运动”，激活并入点
+                                    motionActive = true
+                                    gapAdded = false
+                                    onDistance(meters)
+                                    if (!loggedOn) { addEvent(tr(lang, "检测到运动，距离 ${String.format("%.2f", meters)} 米。", "Motion detected, distance ${String.format("%.2f", meters)} m.")); loggedOn = true; loggedOff = false; pendingOn = false }
+                                    else { addEvent(tr(lang, "目标距离变化至 ${String.format("%.2f", meters)} 米。", "Target distance changed to ${String.format("%.2f", meters)} m.")) }
+                                    // 无论是否重复运动，均认为处于运动期，清除无运动标志以允许后续 OFF 再次记录
+                                    loggedOff = false
+                                }
+                            }
+                        }
+                    }
+
+                    LaunchedEffect(seg, selectedIndex, rawBleTick) {
+                        if (seg != 1) return@LaunchedEffect
+                        // 支持“只读”暂停/清空
+                        val paused = try { sp.getBoolean("pause_motion", false) } catch (_: Exception) { false }
+                        val needClear = try { sp.getBoolean("clear_incoming", false) } catch (_: Exception) { false }
+                        if (needClear) {
+                            monBuf = ""
+                            lastTick = rawBleTick
+                            try { sp.edit().putBoolean("clear_incoming", false).apply() } catch (_: Exception) {}
+                        }
+                        if (paused) return@LaunchedEffect
+                        // 合并新增原始BLE块，并按 CRLF 行解析
+                        // 注意：通过 rawBleTick 可靠获知新增行数量（即使列表大小不变也能触发）
+                        val newTick = rawBleTick
+                        val toRead = (newTick - lastTick).coerceAtLeast(0)
+                        val added = if (toRead > 0) rawBle.take(toRead).joinToString("") else ""
+                        if (added.isNotEmpty()) {
+                            monBuf += added
+                            lastTick = newTick
+                            var idx = monBuf.indexOf("\r\n")
+                            while (idx >= 0) {
+                                val line = monBuf.substring(0, idx)
+                                handleMonLine(line)
+                                monBuf = monBuf.substring(idx + 2)
+                                idx = monBuf.indexOf("\r\n")
+                            }
+                        }
+                    }
                 } else {
                     Text(tr(lang, "当前无在线设备", "No online device"), color = Color(0xFF9bb3d6), fontSize = 12.sp)
                     Spacer(Modifier.height(8.dp))
@@ -832,16 +1052,28 @@ fun ParamsScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ParamsConfigContent(lang: String) {
+fun ParamsConfigContent(lang: String, gatt: BluetoothGatt?, rawBle: List<String>, rawBleTick: Int, onLogEvent: (String) -> Unit) {
     val context = LocalContext.current
     val sp = remember { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE) }
-    var readOnly by remember { mutableStateOf(sp.getBoolean("readonly_mode", false)) }
-    var maxDist by remember { mutableStateOf(sp.getFloat("max_distance", 5.0f)) }
-    var minDist by remember { mutableStateOf(sp.getFloat("min_distance", 0.5f)) }
-    var sensitivity by remember { mutableStateOf(sp.getInt("sensitivity", 70)) }
+    val scope = rememberCoroutineScope()
+    var readOnly by remember { mutableStateOf(sp.getBoolean("readonly_mode", true)) }
+    var awaitingReset by remember { mutableStateOf(false) }
+    var resetStartTick by remember { mutableStateOf(0) }
+    // 累积等待解析的键值，避免日志裁剪导致丢失
+    var pendingHoldFrame by remember { mutableStateOf<Int?>(null) }
+    var pendingMr1Cm by remember { mutableStateOf<Int?>(null) }
+    var pendingMr3Cm by remember { mutableStateOf<Int?>(null) }
+    var pendingRange1Cm by remember { mutableStateOf<Int?>(null) }
+    var pendingRange3Cm by remember { mutableStateOf<Int?>(null) }
+    var pendingTrith by remember { mutableStateOf<Int?>(null) }
+    var maxDist by remember { mutableStateOf(sp.getFloat("max_distance", 6.0f)) }
+    var minDist by remember { mutableStateOf(sp.getFloat("min_distance", 0.0f)) }
+    var sensitivity by remember { mutableStateOf(sp.getInt("sensitivity", 2)) }
     var delaySec by remember { mutableStateOf(sp.getInt("delay_sec", 30)) }
     var workModeIdx by remember { mutableStateOf(sp.getInt("work_mode", 0)) }
     var installModeIdx by remember { mutableStateOf(sp.getInt("install_mode", 0)) }
+    // 用于常态解析 Range 响应（不依赖等待状态），只处理新增数据
+    var lastRangeTick by remember { mutableStateOf(0) }
 
     fun saveAll() {
         try {
@@ -856,9 +1088,78 @@ fun ParamsConfigContent(lang: String) {
                 .apply()
         } catch (_: Exception) {}
     }
-    fun resetDefaults() {
-        maxDist = 5.0f; minDist = 0.5f; sensitivity = 70; delaySec = 30; workModeIdx = 0; installModeIdx = 0; saveAll()
+    fun findWritableCharacteristic(g: BluetoothGatt?): android.bluetooth.BluetoothGattCharacteristic? {
+        if (g == null) return null
+        return try {
+            var candidate: android.bluetooth.BluetoothGattCharacteristic? = null
+            g.services?.forEach { svc ->
+                val hasNotify = (svc.characteristics?.any { ch ->
+                    val props = ch.properties
+                    ((props and android.bluetooth.BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0) ||
+                            ((props and android.bluetooth.BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0)
+                } ?: false)
+                val writable = svc.characteristics?.firstOrNull { ch ->
+                    val props = ch.properties
+                    ((props and android.bluetooth.BluetoothGattCharacteristic.PROPERTY_WRITE) != 0) ||
+                            ((props and android.bluetooth.BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0)
+                }
+                // 优先选择同时包含通知/指示与可写特性的服务（通常是透传串口服务）
+                if (hasNotify && writable != null) return writable
+                if (candidate == null && writable != null) candidate = writable
+            }
+            candidate
+        } catch (_: Exception) { null }
     }
+
+    fun sendAtCommands(g: BluetoothGatt?, lines: List<String>) {
+        try {
+            var ch = findWritableCharacteristic(g)
+            if (ch != null) {
+                // 逐条发送，添加 CRLF
+                scope.launch {
+                    lines.forEach { line ->
+                        val payload = (line + "\r\n").toByteArray()
+                        try { ch!!.value = payload } catch (_: Exception) {}
+                        try {
+                            ch!!.writeType = if ((ch!!.properties and android.bluetooth.BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0)
+                                android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                            else android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                        } catch (_: Exception) {}
+                        try { g?.writeCharacteristic(ch) } catch (_: Exception) {}
+                        kotlinx.coroutines.delay(120)
+                    }
+                }
+            } else {
+                // 未找到可写特性：触发服务发现，稍后重试一次
+                try { g?.discoverServices() } catch (_: Exception) {}
+                scope.launch {
+                    kotlinx.coroutines.delay(500)
+                    val retry = findWritableCharacteristic(g)
+                    if (retry != null) {
+                        lines.forEach { line ->
+                            val payload = (line + "\r\n").toByteArray()
+                            try { retry.value = payload } catch (_: Exception) {}
+                            try {
+                                retry.writeType = if ((retry.properties and android.bluetooth.BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0)
+                                    android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                                else android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            } catch (_: Exception) {}
+                            try { g?.writeCharacteristic(retry) } catch (_: Exception) {}
+                            kotlinx.coroutines.delay(120)
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
+    fun resetDefaults() {
+        maxDist = 6.0f; minDist = 0.0f; sensitivity = 2; delaySec = 20; workModeIdx = 0; installModeIdx = 0; saveAll()
+        // 发送 AT+INIT 指令（使用通用发送函数，自动选择写入类型并在需要时触发服务发现）
+        sendAtCommands(gatt, listOf("AT+INIT"))
+        onLogEvent(tr(lang, "等待设备响应…", "Awaiting device response…"))
+        awaitingReset = true
+    }
+
 
     // 只读模式
     SectionCard(title = tr(lang, "只读模式", "Read-only Mode"), trailing = {
@@ -872,14 +1173,22 @@ fun ParamsConfigContent(lang: String) {
             val selRO = readOnly
             FilterChip(
                 selected = selRO,
-                onClick = { readOnly = true; saveAll() },
+                onClick = {
+                    readOnly = true
+                    saveAll()
+                    onLogEvent(tr(lang, "切换为只读模式，发送 AT+RESET 并等待响应…", "Switched to read-only, sent AT+RESET and awaiting response…"))
+                    sendAtCommands(gatt, listOf("AT+RESET"))
+                    awaitingReset = true
+                    // 点击只读后：暂停运动/距离解析，并清空接收缓冲区
+                    try { sp.edit().putBoolean("pause_motion", true).putBoolean("clear_incoming", true).apply() } catch (_: Exception) {}
+                },
                 label = { Text(tr(lang, "只读", "Locked")) },
                 colors = chipColors,
                 shape = RoundedCornerShape(18.dp)
             )
             FilterChip(
                 selected = !selRO,
-                onClick = { readOnly = false; saveAll() },
+                onClick = { readOnly = false; saveAll(); onLogEvent(tr(lang, "切换为可编辑模式", "Switched to editable mode")) },
                 label = { Text(tr(lang, "可编辑", "Editable")) },
                 colors = chipColors,
                 shape = RoundedCornerShape(18.dp)
@@ -909,9 +1218,9 @@ fun ParamsConfigContent(lang: String) {
         }
         Slider(
             value = maxDist,
-            onValueChange = { if (!readOnly) maxDist = it },
-            valueRange = 0.5f..12f,
-            steps = 115,
+            onValueChange = { if (!readOnly) maxDist = it.coerceIn(0f, 6f) },
+            valueRange = 0f..6f,
+            steps = 60,
             enabled = !readOnly
         )
         Spacer(Modifier.height(8.dp))
@@ -921,12 +1230,179 @@ fun ParamsConfigContent(lang: String) {
         }
         Slider(
             value = minDist,
-            onValueChange = { if (!readOnly) minDist = it },
-            valueRange = 0.5f..12f,
-            steps = 115,
+            onValueChange = { if (!readOnly) minDist = it.coerceIn(0f, 6f) },
+            valueRange = 0f..6f,
+            steps = 60,
             enabled = !readOnly
         )
         }
+    }
+
+    // 当进入等待状态时，清空累积的待解析值
+    LaunchedEffect(awaitingReset) {
+        if (awaitingReset) {
+            resetStartTick = rawBleTick
+            pendingHoldFrame = null
+            pendingMr1Cm = null
+            pendingMr3Cm = null
+            pendingRange1Cm = null
+            pendingRange3Cm = null
+            pendingTrith = null
+        }
+    }
+
+    LaunchedEffect(awaitingReset, rawBleTick) {
+        if (!awaitingReset) return@LaunchedEffect
+
+        // 将最近原始块拼接为连续文本；同时支持基于正则的令牌扫描，不依赖行边界
+        val toRead = (rawBleTick - resetStartTick).coerceAtLeast(0)
+        // 读取最后 toRead 条新增行，兼容 rawBle 列表裁剪
+        val start = (rawBle.size - toRead).coerceAtLeast(0)
+        val newLines = if (toRead > 0) rawBle.drop(start) else emptyList()
+        val stream = newLines.joinToString(separator = "")
+
+        fun findIntTokenLatest(pattern: Regex): Int? = pattern.findAll(stream).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()
+        fun findRangeCmTokenLatest(pattern: Regex): Int? {
+            val m = pattern.findAll(stream).lastOrNull() ?: return null
+            val num = m.groupValues.getOrNull(1)?.toFloatOrNull() ?: return null
+            val unit = m.groupValues.getOrNull(2)?.lowercase()
+            return when (unit) {
+                "cm" -> num.roundToInt()
+                "m", null, "" -> (num * 100f).roundToInt()
+                else -> (num * 100f).roundToInt()
+            }
+        }
+
+        val rxHold = Regex("(?i)\\bholdframe\\s*=\\s*(\\d+)")
+        val rxTrith = Regex("(?i)\\btrith\\s*=\\s*(\\d+)")
+        // 兼容返回格式：Range1/Range2/Range3、MRange1/MRange3、MR1/MR3
+        val rxRange1 = Regex("(?i)\\brange1\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxRange2 = Regex("(?i)\\brange2\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxRange3 = Regex("(?i)\\brange3\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxMr1 = Regex("(?i)\\bmrange1\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxMr3 = Regex("(?i)\\bmrange3\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxMr1Short = Regex("(?i)\\bmr1\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxMr3Short = Regex("(?i)\\bmr3\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+
+        // 令牌级解析（即使行被拆分也能匹配）
+        val holdLatest = findIntTokenLatest(rxHold)
+        val trithLatest = findIntTokenLatest(rxTrith)
+        val range1Latest = findRangeCmTokenLatest(rxRange1)
+        val range3Latest = findRangeCmTokenLatest(rxRange3)
+        val mr1TokenLatest = findRangeCmTokenLatest(rxMr1Short) ?: findRangeCmTokenLatest(rxMr1)
+        val mr3TokenLatest = findRangeCmTokenLatest(rxMr3Short) ?: findRangeCmTokenLatest(rxMr3)
+        // Range2 当前未直接用于 UI 计算，但解析以备后续扩展
+        val _mr2Latest = findRangeCmTokenLatest(rxRange2)
+
+        pendingHoldFrame = holdLatest ?: pendingHoldFrame
+        pendingTrith = trithLatest ?: pendingTrith
+        // 分开记录 Range 与 MR 令牌，避免混用导致错误计算
+        pendingRange1Cm = range1Latest ?: pendingRange1Cm
+        pendingRange3Cm = range3Latest ?: pendingRange3Cm
+        pendingMr1Cm = mr1TokenLatest ?: pendingMr1Cm
+        pendingMr3Cm = mr3TokenLatest ?: pendingMr3Cm
+
+        var changed = false
+        // 只要发现任意目标令牌，即认为已收到设备响应（即使值未变化）
+        val ackFound = (holdLatest != null) || (trithLatest != null) ||
+                (range1Latest != null) || (range3Latest != null) ||
+                (mr1TokenLatest != null) || (mr3TokenLatest != null) || (_mr2Latest != null)
+        // 单独更新：TRITH
+        if (pendingTrith != null) {
+            val sensitivityNew = pendingTrith!!.coerceIn(1, 5)
+            if (sensitivity != sensitivityNew) { sensitivity = sensitivityNew; changed = true }
+        }
+        // 单独更新：HoldFrame
+        if (pendingHoldFrame != null) {
+            val hold_time = (pendingHoldFrame!! / 2)
+            if (delaySec != hold_time) { delaySec = hold_time; changed = true }
+        }
+        // 单独更新：Range3 或 MR3 -> max_distance（Range 优先）
+        if (pendingRange3Cm != null) {
+            val max_distance = (pendingRange3Cm!! / 100f)
+            val newMax = max_distance.coerceIn(0f, 6f)
+            if (maxDist != newMax) { maxDist = newMax; changed = true }
+        } else if (pendingMr3Cm != null) {
+            val max_distance = (pendingMr3Cm!! / 100f)
+            val newMax = max_distance.coerceIn(0f, 6f)
+            if (maxDist != newMax) { maxDist = newMax; changed = true }
+        }
+        // 单独更新：最小距离按公式 min = Range3 - Range1*3（单位统一为米；Range优先，回退到MR或已知maxDist）
+        val r3KnownMeters: Float? = when {
+            pendingRange3Cm != null -> pendingRange3Cm!! / 100f
+            pendingMr3Cm != null -> pendingMr3Cm!! / 100f
+            maxDist > 0f -> maxDist
+            else -> null
+        }
+        if (pendingRange1Cm != null && r3KnownMeters != null) {
+            val min_distance = r3KnownMeters - (pendingRange1Cm!! * 3 / 100f)
+            val newMin = min_distance.coerceIn(0f, 6f)
+            if (minDist != newMin) { minDist = newMin; changed = true }
+        } else if (pendingMr1Cm != null && r3KnownMeters != null) {
+            val min_distance = r3KnownMeters - (pendingMr1Cm!! * 3 / 100f)
+            val newMin = min_distance.coerceIn(0f, 6f)
+            if (minDist != newMin) { minDist = newMin; changed = true }
+        }
+
+        // 已收到设备响应：最终计算距离，若最小距离无法计算则设为 0.0
+        if (ackFound) {
+            var finalizeChanged = false
+            // 最大距离已在上方按 Range3/MR3 更新；此处对最小距离进行兜底
+            val r3KnownMetersForFinalize: Float? = when {
+                pendingRange3Cm != null -> pendingRange3Cm!! / 100f
+                pendingMr3Cm != null -> pendingMr3Cm!! / 100f
+                else -> maxDist
+            }
+            val hasMinToken = (pendingRange1Cm != null) || (pendingMr1Cm != null)
+            val newMinFinalize = if (hasMinToken && r3KnownMetersForFinalize != null) {
+                val r1cm = pendingRange1Cm ?: pendingMr1Cm!!
+                (r3KnownMetersForFinalize - (r1cm * 3 / 100f)).coerceIn(0f, 6f)
+            } else 0.0f
+            if (minDist != newMinFinalize) { minDist = newMinFinalize; finalizeChanged = true }
+            if (changed || finalizeChanged) { saveAll() }
+            // 结束等待状态以恢复按钮样式
+            awaitingReset = false
+            onLogEvent(tr(lang, "收到设备响应，结束等待", "Received response; ending wait"))
+        }
+    }
+
+    // 常态解析：每当有新增原始BLE数据时，解析 Range1/Range3 并更新最小/最大距离
+    LaunchedEffect(rawBleTick) {
+        val toRead = (rawBleTick - lastRangeTick).coerceAtLeast(0)
+        if (toRead <= 0) return@LaunchedEffect
+        // 读取最后 toRead 条新增行，避免因列表裁剪导致 drop 超界
+        val start = (rawBle.size - toRead).coerceAtLeast(0)
+        val newLines = rawBle.drop(start)
+        val stream = newLines.joinToString(separator = "")
+        lastRangeTick = rawBleTick
+
+        fun findRangeCmTokenLatest(pattern: Regex): Int? {
+            val m = pattern.findAll(stream).lastOrNull() ?: return null
+            val num = m.groupValues.getOrNull(1)?.toFloatOrNull() ?: return null
+            val unit = m.groupValues.getOrNull(2)?.lowercase()
+            return when (unit) {
+                "cm" -> num.roundToInt()
+                "m", null, "" -> (num * 100f).roundToInt()
+                else -> (num * 100f).roundToInt()
+            }
+        }
+
+        val rxRange1 = Regex("(?i)\\brange1\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxRange3 = Regex("(?i)\\brange3\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val r1Cm = findRangeCmTokenLatest(rxRange1)
+        val r3Cm = findRangeCmTokenLatest(rxRange3)
+
+        var changed = false
+        if (r3Cm != null) {
+            val newMax = (r3Cm / 100f).coerceIn(0f, 6f)
+            if (maxDist != newMax) { maxDist = newMax; changed = true }
+        }
+        if (r1Cm != null) {
+            val mr3KnownCm = r3Cm ?: kotlin.math.round(maxDist * 100f).toInt()
+            val newMin = ((mr3KnownCm / 100f) - (r1Cm * 3 / 100f)).coerceIn(0f, 6f)
+            if (minDist != newMin) { minDist = newMin; changed = true }
+        }
+        if (changed) saveAll()
     }
 
     Spacer(Modifier.height(12.dp))
@@ -937,7 +1413,7 @@ fun ParamsConfigContent(lang: String) {
             Text(tr(lang, "触发灵敏度", "Trigger Sensitivity"), color = Color.White, modifier = Modifier.weight(1f))
             Text("${sensitivity}", color = Color(0xFF9bb3d6))
         }
-        Slider(value = sensitivity.toFloat(), onValueChange = { if (!readOnly) sensitivity = it.toInt() }, valueRange = 0f..100f, steps = 99, enabled = !readOnly)
+        Slider(value = sensitivity.toFloat(), onValueChange = { if (!readOnly) sensitivity = it.toInt().coerceIn(1, 5) }, valueRange = 1f..5f, steps = 4, enabled = !readOnly)
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(tr(lang, "感应延时", "Sensing Delay"), color = Color.White, modifier = Modifier.weight(1f))
@@ -996,15 +1472,77 @@ fun ParamsConfigContent(lang: String) {
 
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Button(onClick = { if (!readOnly) saveAll() }, enabled = !readOnly, modifier = Modifier.weight(1f)) { Text(tr(lang, "保存配置", "Save")) }
-        OutlinedButton(onClick = { if (!readOnly) resetDefaults() }, enabled = !readOnly, modifier = Modifier.weight(1f)) { Text(tr(lang, "恢复默认", "Reset")) }
+        val resetSelected = awaitingReset
+        if (resetSelected) {
+            OutlinedButton(onClick = {
+                if (!readOnly) {
+                    // 保存到本地
+                    saveAll()
+                    // 计算并发送 AT 指令
+                    val dRange = (maxDist - minDist).coerceAtLeast(0f)
+                    val mr1 = kotlin.math.round((dRange * 100f) / 3f).toInt()
+                    val mr2 = kotlin.math.round((dRange * 200f) / 3f).toInt()
+                    val mr3 = kotlin.math.round(maxDist * 100f).toInt()
+                    val hold = 2 * delaySec
+                    val cmds = listOf(
+                        "AT+R1=${mr1}",
+                        "AT+R2=${mr2}",
+                        "AT+R3=${mr3}",
+                        "AT+TRITH=${sensitivity}",
+                        "AT+HOLD=${hold}"
+                    )
+                    sendAtCommands(gatt, cmds)
+                }
+            }, enabled = !readOnly, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)) { Text(tr(lang, "保存配置", "Save")) }
+        } else {
+            Button(onClick = {
+                if (!readOnly) {
+                    // 保存到本地
+                    saveAll()
+                    // 计算并发送 AT 指令
+                    val dRange = (maxDist - minDist).coerceAtLeast(0f)
+                    val mr1 = kotlin.math.round((dRange * 100f) / 3f).toInt()
+                    val mr2 = kotlin.math.round((dRange * 200f) / 3f).toInt()
+                    val mr3 = kotlin.math.round(maxDist * 100f).toInt()
+                    val hold = 2 * delaySec
+                    val cmds = listOf(
+                        "AT+R1=${mr1}",
+                        "AT+R2=${mr2}",
+                        "AT+R3=${mr3}",
+                        "AT+TRITH=${sensitivity}",
+                        "AT+HOLD=${hold}"
+                    )
+                    sendAtCommands(gatt, cmds)
+                }
+            }, enabled = !readOnly, modifier = Modifier.weight(1f)) { Text(tr(lang, "保存配置", "Save")) }
+        }
+        if (resetSelected) {
+            Button(
+                onClick = { if (!readOnly) resetDefaults() },
+                enabled = !readOnly,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) { Text(tr(lang, "恢复默认", "Reset")) }
+        } else {
+            OutlinedButton(
+                onClick = { if (!readOnly) resetDefaults() },
+                enabled = !readOnly,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.primary
+                )
+            ) { Text(tr(lang, "恢复默认", "Reset")) }
+        }
     }
 }
 
 @Composable
 fun LogsContent(eventLogs: List<String>, rawBle: List<String>, lang: String) {
     val context = LocalContext.current
-    val limit = try { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE).getInt("log_limit", 5) } catch (_: Exception) { 5 }
+    val limit = try { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE).getInt("log_limit", 20) } catch (_: Exception) { 20 }
     val eventState = rememberLazyListState(); val rawState = rememberLazyListState()
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
@@ -1014,7 +1552,7 @@ fun LogsContent(eventLogs: List<String>, rawBle: List<String>, lang: String) {
         Column(Modifier.weight(1f)) {
             Text(tr(lang, "原始日志(${limit})", "Raw Logs(${limit})"), color = Color(0xFF9bb3d6), fontSize = 12.sp)
             val filtered = rawBle.filter { it.trim().isNotEmpty() }
-            LazyColumn(state = rawState, modifier = Modifier.height(140.dp)) { items(filtered.take(limit)) { Text(it, color = Color.White) } }
+            LazyColumn(state = rawState, modifier = Modifier.height(140.dp)) { items(filtered.take(limit)) { Text(it.trim(), color = Color.White) } }
         }
     }
 }
@@ -1090,28 +1628,47 @@ fun DistanceChart(points: List<DistancePoint>) {
             val h = size.height; val w = size.width
             val stepY = h / 4f
             repeat(5) { i -> drawLine(color = Color(0x223B5B7E), start = Offset(0f, i * stepY), end = Offset(w, i * stepY)) }
-            if (show.size >= 2) {
-                val dx = w / (show.size - 1).coerceAtLeast(1)
-                var lastPoint: Float? = null
-                var lastX = 0f
-                var lastY = 0f
-                show.forEachIndexed { i, p ->
-                    val x = i * dx
+            if (show.isNotEmpty()) {
+                // 以可见区域内的第一个有效事件作为 0s 起点
+                val startT = show.firstOrNull { it.meters != null }?.t ?: show.first().t
+                val windowMs = secondsWindow * 1000f
+
+                // 分段：遇到 null 断开，避免跨越缺失值
+                var segment = mutableListOf<Offset>()
+                fun flushSegment() {
+                    if (segment.isEmpty()) return
+                    if (segment.size == 1) {
+                        drawCircle(color = Color(0xFF2d7bf3), radius = 4f, center = segment[0])
+                        segment.clear(); return
+                    }
+                    // 使用二次贝塞尔的中点法绘制平滑曲线
+                    val path = Path()
+                    path.moveTo(segment[0].x, segment[0].y)
+                    for (i in 1 until segment.size) {
+                        val prev = segment[i - 1]
+                        val curr = segment[i]
+                        val mid = Offset((prev.x + curr.x) / 2f, (prev.y + curr.y) / 2f)
+                        path.quadraticBezierTo(prev.x, prev.y, mid.x, mid.y)
+                    }
+                    path.lineTo(segment.last().x, segment.last().y)
+                    drawPath(path = path, color = Color(0xFF2d7bf3), style = Stroke(width = 3f))
+                    // 每个点绘制标记
+                    segment.forEach { pt -> drawCircle(color = Color(0xFF2d7bf3), radius = 4f, center = pt) }
+                    segment.clear()
+                }
+
+                show.forEach { p ->
                     val m = p.meters
+                    val x = (((p.t - startT).coerceAtLeast(0L)).toFloat() / windowMs).coerceIn(0f, 1f) * w
                     if (m != null) {
-                        // 超出范围的值进行钳制，确保绘制在图内
                         val mc = m.coerceIn(minD, maxD)
                         val y = h * (maxD - mc) / range
-                        if (lastPoint != null) {
-                            drawLine(color = Color(0xFF2d7bf3), start = Offset(lastX, lastY), end = Offset(x, y), strokeWidth = 3f)
-                        }
-                        lastPoint = mc
-                        lastX = x
-                        lastY = y
+                        segment.add(Offset(x, y))
                     } else {
-                        lastPoint = null
+                        flushSegment()
                     }
                 }
+                flushSegment()
             }
         }
     }

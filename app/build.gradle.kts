@@ -4,20 +4,37 @@ plugins {
 }
 
 android {
-    namespace = "com.dingtek.radarlinkpro"
+    namespace = "radarlinkpro.dingtek.com"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.dingtek.radarlinkpro"
+        applicationId = "radarlinkpro.dingtek.com"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
     }
 
+    // 从gradle.properties读取release签名属性
+    val releaseStoreFilePath = providers.gradleProperty("RELEASE_STORE_FILE").getOrElse("app/keystore/release.keystore")
+    val releaseStorePassword = providers.gradleProperty("RELEASE_STORE_PASSWORD").getOrElse("")
+    val releaseKeyAlias = providers.gradleProperty("RELEASE_KEY_ALIAS").getOrElse("")
+    val releaseKeyPassword = providers.gradleProperty("RELEASE_KEY_PASSWORD").getOrElse("")
+
+    signingConfigs {
+        create("release") {
+            storeFile = file(releaseStoreFilePath)
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            // 使用正式release签名
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -66,3 +83,6 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.0")
     implementation("androidx.compose.material:material-icons-extended")
 }
+// Avoid Windows file locking issues on default build directory
+// Redirect build outputs to a separate folder
+buildDir = file("build3")

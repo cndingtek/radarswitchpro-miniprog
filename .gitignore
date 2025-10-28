@@ -6,6 +6,13 @@ build/
 **/tmp/
 **/snapshot/
 
+# Non-standard local build outputs
+app/build2/
+app/build3/
+
+# Local keystore (do not commit signing material)
+app/keystore/
+
 # Local SDK and tools (environment-specific)
 .android-sdk/
 .tools/
