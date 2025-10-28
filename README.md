@@ -1,3 +1,6 @@
+[中文](#zh) | [English](#en)
+
+<a id="zh"></a>
 # RadarSwitch（雷达开关 DC59X）
 
 RadarSwitch 是用于 CNDingtek 雷达开关 DC59X 的配置与诊断工具，基于 Android（Jetpack Compose + Kotlin）。支持通过蓝牙（BLE）扫描并连接设备、读取与修改参数、查看设备返回日志及距离信息，辅以“恢复默认”及只读模式，便于快速定位与安全调整。
@@ -70,6 +73,7 @@ RadarSwitch 是用于 CNDingtek 雷达开关 DC59X 的配置与诊断工具，�
 
 ---
 
+<a id="en"></a>
 ## English — RadarSwitch (DC59X Radar Switch)
 
 RadarSwitch is a configuration and diagnostics tool for the CNDingtek DC59X radar switch. It is an Android app built with Jetpack Compose and Kotlin. The app supports BLE scanning and connection, reading and modifying device parameters, viewing device logs and distance information, and provides "Restore Defaults" and a read-only mode to enable safe adjustments and quick troubleshooting.
