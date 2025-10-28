@@ -51,6 +51,33 @@ RadarSwitch 是用于 CNDingtek 雷达开关 DC59X 的配置与诊断工具，�
 5. 查看日志与诊断：
    - 在日志页面查看设备最近运行记录与距离信息；默认显示 20 条，可在设置页调整上限。
 
+## 界面预览
+- 扫描与连接
+  
+  ![扫描与连接](docs/screenshots/scan.png)
+
+- 参数页（只读）
+  
+  ![参数页（只读）](docs/screenshots/params-readonly.png)
+
+- 参数页（可编辑）
+  
+  ![参数页（可编辑）](docs/screenshots/params-edit.png)
+
+- 恢复默认与距离刷新
+  
+  ![恢复默认与距离刷新](docs/screenshots/restore-defaults.png)
+
+- 日志页
+  
+  ![日志页](docs/screenshots/logs.png)
+
+- 设置页
+  
+  ![设置页](docs/screenshots/settings.png)
+
+> 提示：若图片未显示，请将 PNG 截图文件按上述文件名放置到 `docs/screenshots/` 目录。
+
 ## 构建与安装
 - 本地构建：
   - Debug 包：`./gradlew.bat assembleDebug`，输出位于 `app/build3/outputs/apk/debug/`。
@@ -123,6 +150,32 @@ RadarSwitch is a configuration and diagnostics tool for the CNDingtek DC59X rada
    - Distance refresh saves automatically and ends the waiting state. The page shows the latest values.
 5. Logs & diagnostics:
    - Use the Logs page to inspect recent records and distance values. Default shows 20 lines; adjust the limit in Settings.
+
+### Screenshots
+- Scan & Connect
+
+  ![Scan & Connect](docs/screenshots/scan.png)
+
+- Parameters (Read-only)
+
+  ![Parameters (Read-only)](docs/screenshots/params-readonly.png)
+
+- Parameters (Editable)
+
+  ![Parameters (Editable)](docs/screenshots/params-edit.png)
+
+- Restore Defaults & Distance Refresh
+
+  ![Restore Defaults & Distance Refresh](docs/screenshots/restore-defaults.png)
+
+- Logs
+
+  ![Logs](docs/screenshots/logs.png)
+
+- Settings
+
+  ![Settings](docs/screenshots/settings.png)
+
 
 ### Build & Install
 - Local builds:
