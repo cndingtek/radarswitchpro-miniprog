@@ -67,3 +67,75 @@ RadarSwitch 是用于 CNDingtek 雷达开关 DC59X 的配置与诊断工具，�
   - 触发“恢复默认”后保持停留等待设备响应；收到 `Range3/MR3`、`Range1/MR1` 后会自动刷新并保存；未收到 `Range1` 时最小距离兜底为 `0.0`。
 - 日志数量太少/过多？
   - 在设置页将日志条数上限调整为 5/10/20（默认 20）。
+
+---
+
+## English — RadarSwitch (DC59X Radar Switch)
+
+RadarSwitch is a configuration and diagnostics tool for the CNDingtek DC59X radar switch. It is an Android app built with Jetpack Compose and Kotlin. The app supports BLE scanning and connection, reading and modifying device parameters, viewing device logs and distance information, and provides "Restore Defaults" and a read-only mode to enable safe adjustments and quick troubleshooting.
+
+### Features
+- BLE scan and connect:
+  - Scan nearby DC59X devices and establish a BLE connection.
+- Read and modify parameters:
+  - Open the parameter page to read device parameters; exit read-only mode to modify and save.
+- Logs and distance diagnostics:
+  - View recent operational logs and distance values reported by the device. By default the last 20 lines are shown (adjustable in Settings).
+  - Uses an incremental "last N lines" strategy to stay robust when the device trims its original log list.
+- Restore Defaults and distance calculation:
+  - After triggering Restore Defaults, the app waits for device responses and calculates distances based on returned tokens:
+    - Max distance: prefer `Range3/MR3`; if not received, keep default `6.0`.
+    - Min distance: prefer `Range1/MR1` and combine with Max distance; if unavailable (e.g., `Range1` not received), fallback to `0.0`.
+  - Once max/min distances are refreshed, values are saved immediately and the waiting state ends so the page shows the latest data.
+- Read-only mode (enabled by default):
+  - The parameter page starts in read-only mode to avoid accidental changes; switch to editable to modify.
+- Settings page:
+  - Log count upper limit options: 5, 10, 20 (default 20).
+  - Other display and behavior options related to diagnostics.
+
+### Design Requirements & Constraints
+- Platform & compatibility:
+  - Minimum `minSdk=24`, target `targetSdk=34`.
+- Interaction & safety:
+  - Read-only is enabled by default. Editing requires an explicit switch to editable mode.
+  - After Restore Defaults, distance calculations rely on device responses to ensure data reliability.
+- Log parsing strategy:
+  - Incremental retrieval of the "last N lines" prevents missing data when the device trims logs.
+- Build warnings:
+  - The current version has deprecation warnings for `textFieldColors` and `quadraticBezierTo`. Functionality is unaffected; these APIs will be replaced gradually.
+
+### Usage
+1. Install & permissions:
+   - Download and install `app-release.apk` from the Releases page. Uninstall any Debug build first to avoid signature conflicts.
+   - On first run, grant Bluetooth and location permissions for device scanning and connection.
+2. Scan & connect:
+   - Open the app, go to the Scan page, select a DC59X device from the list, and connect.
+3. View & edit parameters:
+   - The parameter page is read-only by default. Switch to editable to modify, then save your changes.
+4. Restore Defaults & distance refresh:
+   - On the Restore Defaults page, tap the button and stay on the page while waiting for device tokens:
+     - On receiving `Range3/MR3`, refresh Max distance; otherwise keep `6.0`.
+     - On receiving `Range1/MR1`, refresh Min distance using Max; if not received, fallback to `0.0`.
+   - Distance refresh saves automatically and ends the waiting state. The page shows the latest values.
+5. Logs & diagnostics:
+   - Use the Logs page to inspect recent records and distance values. Default shows 20 lines; adjust the limit in Settings.
+
+### Build & Install
+- Local builds:
+  - Debug: `./gradlew.bat assembleDebug`, output at `app/build3/outputs/apk/debug/`.
+  - Release: `./gradlew.bat assembleRelease`, output at `app/build3/outputs/apk/release/`.
+- Local development download:
+  - `http://localhost:8001/app/build3/outputs/apk/release/app-release.apk`
+
+### Version & Release
+- Current version: `versionCode=1`, `versionName=1.0.0`.
+- Tag: `v1.0.0` (pushed). See Releases in the repository.
+- Changelog: see `CHANGELOG.md`.
+
+### FAQ
+- Installation fails or signature conflict?
+  - Uninstall the previous build (especially Debug) and install the Release build.
+- Max/min distance not refreshing while staying on the page?
+  - After triggering Restore Defaults, remain on the page and wait for device tokens. On receiving `Range3/MR3` and `Range1/MR1` distances are refreshed and saved; if `Range1` is not received, Min distance falls back to `0.0`.
+- Too few or too many log lines?
+  - Adjust the log upper limit in Settings to 5/10/20 (default 20).
