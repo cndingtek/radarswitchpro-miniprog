@@ -6,11 +6,16 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothSocket
+import android.util.Log
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -85,7 +90,7 @@ sealed class TopTab(val icon: androidx.compose.ui.graphics.vector.ImageVector, v
     object Settings : TopTab(Icons.Filled.Settings, "设置")
 }
 
-data class Device(val name: String, val mac: String, val rssi: Int)
+data class Device(val name: String, val mac: String, val rssi: Int, val kind: String)
 
 data class PairedDevice(val name: String, val mac: String, val online: Boolean, val lastConnectedMs: Long)
 
@@ -109,12 +114,36 @@ fun RadarLinkApp() {
     var rawBleTick by remember { mutableStateOf(0) }
     var currentGatt by remember { mutableStateOf<BluetoothGatt?>(null) }
     var currentMtu by remember { mutableStateOf(23) }
+    // SPP: 记录各设备 Socket，并为当前选择的设备提供快速访问
+    val sppSockets = remember { mutableStateMapOf<String, BluetoothSocket?>() }
     val context = LocalContext.current
     val sp = remember { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE) }
     val bluetoothManager = remember { context.getSystemService(BluetoothManager::class.java) }
     val adapter: BluetoothAdapter? = bluetoothManager?.adapter
     val autoConnections = remember { mutableStateMapOf<String, BluetoothGatt?>() }
     var appLang by remember { mutableStateOf(sp.getString("language", "zh") ?: "zh") }
+
+    // 统一原始数据推送：按 CRLF 行边界、去重、限制条数，并发送到 bleChannel
+    fun pushRaw(raw: String) {
+        rawBuf += raw
+        rawBuf = rawBuf.replace("\r\n", "\n").replace('\r', '\n')
+        var idx = rawBuf.indexOf('\n')
+        var addedCount = 0
+        while (idx >= 0) {
+            val line = rawBuf.substring(0, idx)
+            rawBuf = rawBuf.substring(idx + 1)
+            val t = line.trim()
+            if (t.isNotEmpty()) {
+                val entry = "$t\r\n"
+                val last = rawBleLines.firstOrNull()?.trim()
+                if (last != t) { rawBleLines.add(0, entry); addedCount++; bleChannel.trySend(t) }
+            }
+            idx = rawBuf.indexOf('\n')
+        }
+        val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
+        try { while (rawBleLines.size > limit) rawBleLines.removeLast() } catch (_: Exception) {}
+        if (addedCount > 0) rawBleTick += addedCount
+    }
 
     fun loadPairedFromPrefs() {
         try {
@@ -176,7 +205,10 @@ fun RadarLinkApp() {
                                 val p0 = pairedDevices[idx]
                                 val realName = try { gatt.device.name } catch (_: Exception) { null }
                                 val useName = if (!realName.isNullOrBlank()) realName else p0.name
-                                pairedDevices[idx] = p0.copy(name = useName, online = false, lastConnectedMs = System.currentTimeMillis())
+                                // 仅当同 MAC 没有处于连接的 SPP Socket 时，才将在线置为 false，避免 BLE 断开覆盖 SPP 在线
+                                val stillSppOnline = try { sppSockets[gatt.device.address] != null } catch (_: Exception) { false }
+                                val effectiveOnline = if (stillSppOnline) true else false
+                                pairedDevices[idx] = p0.copy(name = useName, online = effectiveOnline, lastConnectedMs = System.currentTimeMillis())
                                 savePairedToPrefs()
                             }
                             autoConnections.remove(gatt.device.address)
@@ -243,15 +275,30 @@ fun RadarLinkApp() {
             when (tab) {
                 is TopTab.Scan -> ScanScreen(
                     lang = appLang,
-                    autoConnectMacs = pairedDevices.map { it.mac },
+                    autoConnectMacs = try {
+                        val bm = context.getSystemService(BluetoothManager::class.java)
+                        val ad = bm?.adapter
+                        ad?.bondedDevices?.map { it.address } ?: emptyList()
+                    } catch (_: Exception) { emptyList() },
                     onPaired = { pd ->
+                        // 更新或新增配对设备
                         val idx = pairedDevices.indexOfFirst { it.mac == pd.mac }
-                        if (idx < 0) pairedDevices.add(pd) else pairedDevices[idx] = pd
+                        if (idx < 0) {
+                            pairedDevices.add(pd)
+                        } else {
+                            pairedDevices[idx] = pd
+                        }
+                        // 若为“在线”事件，则联动选中索引到当前设备，避免用户看到其它设备的离线状态
+                        if (pd.online) {
+                            val cur = pairedDevices.indexOfFirst { it.mac == pd.mac }
+                            if (cur >= 0) selectedPairedIndex = cur
+                        }
                         savePairedToPrefs()
                     },
                     onGattChanged = { g -> currentGatt = g },
                     onRssi = { v -> rssiSeries.add(RssiPoint(System.currentTimeMillis(), v)) },
                     onLogEvent = { msg ->
+                        try { Log.d("RadarLinkPro", msg) } catch (_: Exception) {}
                         // 统一入口简单去重：避免连续重复文案刷屏
                         if (eventLogs.firstOrNull() != msg) eventLogs.add(0, msg)
                         val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
@@ -259,30 +306,7 @@ fun RadarLinkApp() {
                             while (eventLogs.size > limit) eventLogs.removeLast()
                         } catch (_: Exception) {}
                     },
-                    onRawBle = { raw ->
-                        // 使用缓冲，严格按换行边界(\r\n/\n)推送完整行；过滤空行与连续重复
-                        rawBuf += raw
-                        // 统一换行为 \n，保留未结束片段在缓冲中
-                        rawBuf = rawBuf.replace("\r\n", "\n").replace('\r', '\n')
-                        var idx = rawBuf.indexOf('\n')
-                        var addedCount = 0
-                        while (idx >= 0) {
-                            val line = rawBuf.substring(0, idx)
-                            rawBuf = rawBuf.substring(idx + 1)
-                            val t = line.trim()
-                            if (t.isNotEmpty()) {
-                                val entry = "$t\r\n"
-                                val last = rawBleLines.firstOrNull()?.trim()
-                                if (last != t) { rawBleLines.add(0, entry); addedCount++; bleChannel.trySend(t) }
-                            }
-                            idx = rawBuf.indexOf('\n')
-                        }
-                        val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
-                        try {
-                            while (rawBleLines.size > limit) rawBleLines.removeLast()
-                        } catch (_: Exception) {}
-                        if (addedCount > 0) rawBleTick += addedCount
-                    },
+                    onRawBle = { raw -> pushRaw(raw) },
                     onDistance = { m ->
                         val now = System.currentTimeMillis()
                         distanceSeries.add(DistancePoint(now, m))
@@ -300,6 +324,16 @@ fun RadarLinkApp() {
                                 repeat(distanceSeries.size - 2000) { distanceSeries.removeAt(0) }
                             }
                         } catch (_: Exception) {}
+                    },
+                    onSppSocket = { mac, sock ->
+                        sppSockets[mac] = sock
+                        // 同步更新已配对设备的在线状态，避免“已连接但显示离线”
+                        val idx = pairedDevices.indexOfFirst { it.mac == mac }
+                        if (idx >= 0) {
+                            val p0 = pairedDevices[idx]
+                            pairedDevices[idx] = p0.copy(online = sock != null, lastConnectedMs = System.currentTimeMillis())
+                            savePairedToPrefs()
+                        }
                     }
                 )
                 is TopTab.Devices -> DevicesScreen(lang = appLang, paired = pairedDevices,
@@ -316,6 +350,9 @@ fun RadarLinkApp() {
                     // 若存在自动连接，先断开并移除
                     try { autoConnections[pd.mac]?.close() } catch (_: Exception) {}
                     autoConnections.remove(pd.mac)
+                    // 关闭并清除 SPP Socket
+                    try { sppSockets[pd.mac]?.close() } catch (_: Exception) {}
+                    sppSockets.remove(pd.mac)
                     val idx = pairedDevices.indexOfFirst { it.mac == pd.mac }
                     try {
                         if (idx >= 0) { pairedDevices.removeAt(idx); savePairedToPrefs() }
@@ -332,7 +369,9 @@ fun RadarLinkApp() {
                     rawBleTick = rawBleTick,
                     rawBle = rawBleLines,
                     gatt = currentGatt,
+                    socket = pairedDevices.getOrNull(selectedPairedIndex)?.let { sppSockets[it.mac] },
                     onLogEvent = { msg ->
+                        try { Log.d("RadarLinkPro", msg) } catch (_: Exception) {}
                         eventLogs.add(0, msg)
                         val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
                         try {
@@ -440,7 +479,11 @@ fun DeviceList(
             val connected = connectedMac == d.mac
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF0f2340)), shape = RoundedCornerShape(12.dp)) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text(d.name, color = Color.White); Text("${d.mac} • RSSI ${d.rssi}", color = Color(0xFF9bb3d6), fontSize = 12.sp) }
+                    Column(Modifier.weight(1f)) {
+                        Text(d.name, color = Color.White)
+                        val kindLabel = if (d.kind == "CLASSIC") "SPP" else "BLE"
+                        Text("${d.mac} • ${kindLabel} • RSSI ${d.rssi}", color = Color(0xFF9bb3d6), fontSize = 12.sp)
+                    }
                     if (connected) {
                         val chipColors = FilterChipDefaults.filterChipColors(
                             containerColor = Color.Transparent,
@@ -622,8 +665,12 @@ fun SettingsScreen(lang: String, onLanguageChanged: (String) -> Unit) {
             val devEn = "Shenzhen Dingtek IoT Technology Corp.,Ltd."
             if (lang == "en") {
                 Text("Developer: $devEn", color = Color(0xFF9bb3d6), fontSize = 12.sp)
+                Text("Website: www.dingtek.com", color = Color(0xFF9bb3d6), fontSize = 12.sp)
+                Text("Email: service@dingtek.com", color = Color(0xFF9bb3d6), fontSize = 12.sp)
             } else {
                 Text("开发者：$devZh", color = Color(0xFF9bb3d6), fontSize = 12.sp)
+                Text("网站：www.dingtek.com.cn", color = Color(0xFF9bb3d6), fontSize = 12.sp)
+                Text("邮箱：service@dingtek.com", color = Color(0xFF9bb3d6), fontSize = 12.sp)
             }
         }
     }
@@ -647,8 +694,10 @@ fun ScanScreen(
     onRssi: (Int) -> Unit,
     onLogEvent: (String) -> Unit,
     onRawBle: (String) -> Unit,
-    onDistance: (Float?) -> Unit
+    onDistance: (Float?) -> Unit,
+    onSppSocket: (String, BluetoothSocket?) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val sp = remember { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE) }
     val bluetoothManager = remember { context.getSystemService(BluetoothManager::class.java) }
@@ -659,6 +708,7 @@ fun ScanScreen(
     val devices = remember { mutableStateListOf<Device>() }
     var connectedMac by remember { mutableStateOf<String?>(null) }
     var permissionError by remember { mutableStateOf<String?>(null) }
+    var classicReceiver by remember { mutableStateOf<BroadcastReceiver?>(null) }
 
     var incomingBuf by remember { mutableStateOf("") }
     var lastRangeMm by remember { mutableStateOf<Int?>(null) }
@@ -785,10 +835,181 @@ fun ScanScreen(
         })
     }
 
-    LaunchedEffect(autoConnectMacs) {
-        // 自动连接已配对设备（不需再次扫描）
-        autoConnectMacs.forEach { mac -> connectToDevice("已配对设备", mac) }
+    // SPP 连接与读取循环（优先使用 SPP，失败时回退到 BLE）
+    fun connectSpp(nameGuess: String, mac: String) {
+        // 优先解析可用于 SPP 的经典/双模设备，避免仅 LE 设备地址导致连接失败
+        val fromMac: BluetoothDevice? = try { adapter?.getRemoteDevice(mac) } catch (_: Exception) { null }
+        val bonded = try { adapter?.bondedDevices?.toList() } catch (_: Exception) { null } ?: emptyList()
+        val devCandidates = mutableListOf<BluetoothDevice>()
+        // 1) 精确地址命中（系统配对列表中）
+        bonded.firstOrNull { it.address.equals(mac, ignoreCase = true) }?.let { devCandidates.add(it) }
+        // 2) 如果从 MAC 获取到设备且不是纯 LE，则加入候选
+        if (fromMac != null && fromMac.type != BluetoothDevice.DEVICE_TYPE_LE) {
+            if (devCandidates.none { it.address == fromMac.address }) devCandidates.add(fromMac)
+        }
+        // 2.5) 针对双模设备：尝试按 BLE->SPP 偏移的地址（最后字节 ±1）
+        run {
+            val parts = mac.split(":")
+            if (parts.size == 6) {
+                val lastVal = try { parts[5].toInt(16) } catch (_: Exception) { null }
+                fun joinWithLast(v: Int): String {
+                    val s = v.toString(16).uppercase().padStart(2, '0')
+                    return parts.take(5).joinToString(":") + ":" + s
+                }
+                val plusAddr = lastVal?.let { if (it < 0xFF) joinWithLast(it + 1) else null }
+                val minusAddr = lastVal?.let { if (it > 0x00) joinWithLast(it - 1) else null }
+                val derived = listOfNotNull(plusAddr, minusAddr)
+                if (derived.isNotEmpty()) {
+                    // 移除 SPP 候选地址的调试输出
+                }
+                derived.forEach { a ->
+                    bonded.firstOrNull { it.address.equals(a, ignoreCase = true) }?.let { d ->
+                        if (devCandidates.none { it.address == d.address }) devCandidates.add(d)
+                    }
+                    val dm = try { adapter?.getRemoteDevice(a) } catch (_: Exception) { null }
+                    if (dm != null && dm.type != BluetoothDevice.DEVICE_TYPE_LE) {
+                        if (devCandidates.none { it.address == dm.address }) devCandidates.add(dm)
+                    }
+                }
+            }
+        }
+        // 3) 按名称匹配（处理 BLE 与经典地址不同的设备）
+        if (devCandidates.isEmpty()) {
+            bonded.filter { (it.name ?: "") == nameGuess }.forEach { d ->
+                if (devCandidates.none { it.address == d.address }) devCandidates.add(d)
+            }
+        }
+        // 4) 最后兜底：使用原始地址对应的设备对象（可能是 LE，仅用于反射尝试，不一定可连）
+        if (devCandidates.isEmpty() && fromMac != null) devCandidates.add(fromMac)
+        if (devCandidates.isEmpty()) {
+            // 移除 SPP 未找到候选设备的调试输出
+            return
+        }
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val defaultSpp = java.util.UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+                var sock: BluetoothSocket? = null
+                var connected = false
+                var lastErr: Exception? = null
+                var usedDevice: BluetoothDevice? = null
+
+                // 逐个候选设备尝试：优先使用标准 SPP UUID，再回退到反射通道
+                for (dev in devCandidates) {
+                    val typeStr = when (dev.type) {
+                        BluetoothDevice.DEVICE_TYPE_CLASSIC -> "CLASSIC"
+                        BluetoothDevice.DEVICE_TYPE_DUAL -> "DUAL"
+                        BluetoothDevice.DEVICE_TYPE_LE -> "LE"
+                        else -> dev.type.toString()
+                    }
+                    // 移除 SPP 目标设备类型的调试输出
+
+                    // 拉取 SDP UUID（可选），但始终将标准 SPP UUID 放在首位
+                    val uuids = mutableListOf<java.util.UUID>()
+                    uuids.add(defaultSpp)
+                    try { dev.fetchUuidsWithSdp() } catch (_: Exception) {}
+                    try { kotlinx.coroutines.delay(500) } catch (_: Exception) {}
+                    val sdp = try { dev.uuids?.mapNotNull { it?.uuid } ?: emptyList() } catch (_: Exception) { emptyList() }
+                    sdp.filter { it != defaultSpp }.forEach { uuids.add(it) }
+                    // 移除 SPP UUID 尝试的调试输出
+
+                    for (u in uuids) {
+                        try { adapter?.cancelDiscovery() } catch (_: Exception) {}
+                        // 先尝试安全 RFCOMM
+                        try {
+                            val s1 = dev.createRfcommSocketToServiceRecord(u)
+                            s1.connect()
+                            sock = s1
+                            connected = true
+                            usedDevice = dev
+                            break
+                        } catch (e1: Exception) {
+                            lastErr = e1
+                            try { Log.e("RadarLinkPro", "Secure RFCOMM connect failed for ${u}: ${e1.message}") } catch (_: Exception) {}
+                            try { sock?.close() } catch (_: Exception) {}
+                            // 非安全 RFCOMM 重试
+                            try {
+                                val s2 = dev.createInsecureRfcommSocketToServiceRecord(u)
+                                try { adapter?.cancelDiscovery() } catch (_: Exception) {}
+                                s2.connect()
+                                sock = s2
+                                connected = true
+                                usedDevice = dev
+                                break
+                            } catch (e2: Exception) {
+                                lastErr = e2
+                                try { Log.e("RadarLinkPro", "Insecure RFCOMM connect failed for ${u}: ${e2.message}") } catch (_: Exception) {}
+                                try { sock?.close() } catch (_: Exception) {}
+                            }
+                        }
+                    }
+                    if (connected && sock != null) break
+                    // 为提升稳定性，禁用 RFCOMM 反射通道扫描，仅使用标准/SDP UUID 的安全/不安全连接
+                    if (connected && sock != null) break
+                }
+                if (!connected || sock == null) throw (lastErr ?: java.lang.Exception("SPP connect failed: no UUID connectable"))
+                val usedMac = usedDevice?.address ?: mac
+                connectedMac = usedMac
+                onSppSocket(usedMac, sock)
+                val realName = try { usedDevice?.name } catch (_: Exception) { null }
+                val useName = if (!realName.isNullOrBlank()) realName!! else nameGuess
+                onPaired(PairedDevice(useName, usedMac, online = true, lastConnectedMs = System.currentTimeMillis()))
+                // 移除 SPP 已连接的调试输出
+                // 主动发送握手序列，避免设备因未收到首包而关闭会话
+                try {
+                    val out = sock.outputStream
+                    // 仅发送 AT，移除 AA
+                    out.write("AT\r\n".toByteArray())
+                    out.flush()
+                    try { kotlinx.coroutines.delay(50) } catch (_: Exception) {}
+                } catch (ehs: Exception) {
+                    // 移除 SPP 握手失败的调试输出
+                }
+                // 读取循环
+                val ins = sock.inputStream
+                val buf = ByteArray(1024)
+                while (sock.isConnected) {
+                    val n = try { ins.read(buf) } catch (_: Exception) { -1 }
+                    if (n == -1) break
+                    if (n > 0) {
+                        val s = try { String(buf, 0, n) } catch (_: Exception) { null }
+                        if (!s.isNullOrEmpty()) {
+                            // 原始流保留（用于参数解析）
+                            onRawBle(s!!)
+                            // 将 SPP 数据也走统一的 ON/OFF/Range 解析管道，修复目标距离监控不刷新
+                            try {
+                                val paused = try { sp.getBoolean("pause_motion", false) } catch (_: Exception) { false }
+                                val needClear = try { sp.getBoolean("clear_incoming", false) } catch (_: Exception) { false }
+                                if (needClear) { incomingBuf = ""; try { sp.edit().putBoolean("clear_incoming", false).apply() } catch (_: Exception) {} }
+                                if (!paused) {
+                                    incomingBuf += s
+                                    var idx = incomingBuf.indexOf("\r\n")
+                                    while (idx >= 0) {
+                                        val line = incomingBuf.substring(0, idx)
+                                        handleLine(line)
+                                        incomingBuf = incomingBuf.substring(idx + 2)
+                                        idx = incomingBuf.indexOf("\r\n")
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+                // 断开处理（移除 SPP 已断开的调试输出）
+                onSppSocket(usedMac, null)
+                if (connectedMac == usedMac) connectedMac = null
+                val realName2 = try { usedDevice?.name } catch (_: Exception) { null }
+                val useName2 = if (!realName2.isNullOrBlank()) realName2!! else nameGuess
+                onPaired(PairedDevice(useName2, usedMac, online = false, lastConnectedMs = System.currentTimeMillis()))
+            } catch (e: Exception) {
+                // 移除 SPP 连接失败的调试输出
+                onSppSocket(mac, null)
+                // 回退到 BLE
+                connectToDevice(nameGuess, mac)
+            }
+        }
     }
+
+    // 已移除自动 SPP 连接，避免扫描页出现未经点击的配对请求弹窗
 
     fun startScanInternal() {
         if (adapter == null || !adapter.isEnabled || scanner == null) { permissionError = "设备蓝牙不可用或未开启"; return }
@@ -801,7 +1022,7 @@ fun ScanScreen(
                 val rssi = result.rssi
                 if (mac.isNotEmpty()) {
                     val idx = devices.indexOfFirst { it.mac == mac }
-                    val d = Device(name ?: "未知设备", mac, rssi)
+                    val d = Device(name ?: "未知设备", mac, rssi, "BLE")
                     if (idx < 0) devices.add(d) else devices[idx] = d
                 }
             }
@@ -809,6 +1030,24 @@ fun ScanScreen(
             override fun onScanFailed(errorCode: Int) { permissionError = "扫描失败: $errorCode"; scanning = false }
         }
         scanner?.startScan(scanCb)
+        // 同步启动经典蓝牙设备发现，接收 ACTION_FOUND 广播，将设备加入列表（kind=CLASSIC）
+        classicReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action == BluetoothDevice.ACTION_FOUND) {
+                    val dev: BluetoothDevice? = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    val name = dev?.name ?: "未知设备"
+                    val mac = dev?.address ?: ""
+                    val rssi = try { intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE).toInt() } catch (_: Exception) { 0 }
+                    if (mac.isNotEmpty()) {
+                        val idx = devices.indexOfFirst { it.mac == mac }
+                        val d = Device(name, mac, if (rssi == Short.MIN_VALUE.toInt()) 0 else rssi, "CLASSIC")
+                        if (idx < 0) devices.add(d) else devices[idx] = d
+                    }
+                }
+            }
+        }
+        try { context.registerReceiver(classicReceiver, IntentFilter(BluetoothDevice.ACTION_FOUND)) } catch (_: Exception) {}
+        try { adapter?.startDiscovery() } catch (_: Exception) {}
     }
 
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
@@ -817,7 +1056,14 @@ fun ScanScreen(
     }
 
     fun startScan() { if (!hasBlePermissions(context)) permLauncher.launch(permissions) else startScanInternal() }
-    fun stopScan() { scanning = false; scanCb?.let { scanner?.stopScan(it) }; scanCb = null }
+    fun stopScan() {
+        scanning = false
+        scanCb?.let { scanner?.stopScan(it) }
+        scanCb = null
+        try { adapter?.cancelDiscovery() } catch (_: Exception) {}
+        classicReceiver?.let { try { context.unregisterReceiver(it) } catch (_: Exception) {} }
+        classicReceiver = null
+    }
 
     Column(Modifier.fillMaxSize()) {
     SectionCard(title = tr(lang, "蓝牙设备扫描", "Bluetooth Scan"), modifier = Modifier.weight(1f), trailing = {
@@ -849,7 +1095,7 @@ fun ScanScreen(
             lang = lang,
             list = devices,
             connectedMac = connectedMac,
-            onConnect = { d -> connectToDevice(d.name, d.mac) },
+            onConnect = { d -> if (d.kind == "CLASSIC") connectSpp(d.name, d.mac) else connectToDevice(d.name, d.mac) },
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -869,6 +1115,7 @@ fun ParamsScreen(
     rawBleTick: Int,
     rawBle: List<String>,
     gatt: BluetoothGatt?,
+    socket: BluetoothSocket?,
     onLogEvent: (String) -> Unit,
     onDistance: (Float?) -> Unit
 ) {
@@ -889,7 +1136,13 @@ fun ParamsScreen(
             val count = pairedDevices.size
             val initPage = selectedIndex.coerceIn(0, count - 1)
             val pagerState = androidx.compose.foundation.pager.rememberPagerState(initialPage = initPage, pageCount = { count })
+            // Pager -> 选中索引：滑动时更新选中索引
             LaunchedEffect(pagerState.currentPage) { onSelectedChange(pagerState.currentPage) }
+            // 选中索引 -> Pager：当连接事件触发我们改变 selectedIndex 时，让 Pager 跟随到该页
+            LaunchedEffect(selectedIndex) {
+                val target = selectedIndex.coerceIn(0, count - 1)
+                try { pagerState.scrollToPage(target) } catch (_: Exception) {}
+            }
             androidx.compose.foundation.pager.HorizontalPager(state = pagerState, modifier = Modifier.fillMaxWidth().height(84.dp)) { page ->
                 val p = pairedDevices[page]
                 Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
@@ -943,16 +1196,19 @@ fun ParamsScreen(
     Spacer(Modifier.height(10.dp))
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         if (seg == 0) {
-            ParamsConfigContent(lang = lang, gatt = gatt, rawBle = rawBle, rawBleTick = rawBleTick, onLogEvent = onLogEvent, bleChannel = bleChannel)
+            ParamsConfigContent(lang = lang, gatt = gatt, socket = socket, rawBle = rawBle, rawBleTick = rawBleTick, onLogEvent = onLogEvent, bleChannel = bleChannel)
         } else {
             SectionCard(title = tr(lang, "日志与监控", "Logs & Monitor")) {
                 val sel = pairedDevices.getOrNull(selectedIndex)
                 if (sel != null) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("${sel.name} • MAC: ${sel.mac}", color = Color.White)
+                        val bleOnline = try { gatt?.device?.address == sel.mac } catch (_: Exception) { false }
+                        val sppOnline = socket != null
+                        val effectiveOnline = bleOnline || sppOnline || sel.online
                         Box(
-                            modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(if (sel.online) Color(0xFF2DBE60) else Color(0xFF7A889E)).padding(horizontal = 8.dp, vertical = 2.dp)
-                        ) { Text(if (sel.online) tr(lang, "在线", "Online") else tr(lang, "离线", "Offline"), color = Color.White, fontSize = 12.sp) }
+                            modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(if (effectiveOnline) Color(0xFF2DBE60) else Color(0xFF7A889E)).padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) { Text(if (effectiveOnline) tr(lang, "在线", "Online") else tr(lang, "离线", "Offline"), color = Color.White, fontSize = 12.sp) }
                     }
                     Spacer(Modifier.height(8.dp))
                     // 设备名驱动的运动/距离解析（DC590/DC591 解析 Range/ON/OFF，其它解析 0 或 1,114cm,103）
@@ -972,68 +1228,24 @@ fun ParamsScreen(
 
                     fun handleMonLine(line: String) {
                         val t = line.trim(); if (t.isEmpty()) return
-                        val nameLower = sel.name.lowercase()
-                        val isDc = nameLower.contains("dc590") || nameLower.contains("dc591")
-                        if (isDc) {
-                            if (t.equals("OFF", true)) {
-                                pendingOn = false
-                                // 依据运动状态切换记录无运动，并插入一次断点
-                                if (motionActive) {
-                                    addEvent(tr(lang, "未检测到运动", "No motion detected"))
-                                    if (!gapAdded) { onDistance(null); gapAdded = true }
-                                }
-                                motionActive = false
-                                loggedOn = false
-                                loggedOff = true
-                                return
+                        val lower = t.lowercase()
+
+                        // 统一解析：同时支持 DC590/DC591 的 ON/OFF/Range 以及其它设备的 no alarm / 新旧格式
+                        // 1) 无目标："no alarm" 或旧格式 "0"
+                        if (lower.startsWith("no alarm") || t == "0") {
+                            if (motionActive) {
+                                addEvent(tr(lang, "未检测到目标", "No target detected"))
+                                if (!gapAdded) { onDistance(null); gapAdded = true }
                             }
-                            if (t.equals("ON", true)) {
-                                val mm = lastRangeMm
-                                if (!loggedOn) {
-                                    if (mm != null) { val m = mm / 1000f; addEvent(tr(lang, "检测到运动，距离 ${String.format("%.2f", m)} 米。", "Motion detected, distance ${String.format("%.2f", m)} m.")); loggedOn = true; loggedOff = false; pendingOn = false }
-                                    else pendingOn = true
-                                }
-                                motionActive = true
-                                gapAdded = false
-                                loggedOff = false
-                                return
-                            }
-                            val rangePrefix = "Range "
-                            if (t.startsWith(rangePrefix)) {
-                                val numStr = t.removePrefix(rangePrefix).trim().takeWhile { it.isDigit() }
-                                val mmParsed = numStr.toIntOrNull()
-                                if (mmParsed != null) {
-                                    val previous = lastRangeMm
-                                    lastRangeMm = mmParsed
-                                    val m = mmParsed / 1000f
-                                    // 图表：更新距离（米）
-                                    if (motionActive) onDistance(m)
-                                    if (pendingOn && !loggedOn) { addEvent(tr(lang, "检测到运动，距离 ${String.format("%.2f", m)} 米。", "Motion detected, distance ${String.format("%.2f", m)} m.")); loggedOn = true; loggedOff = false; pendingOn = false }
-                                    if (loggedOn && previous != null && previous != mmParsed) { addEvent(tr(lang, "目标距离变化至 ${String.format("%.2f", m)} 米。", "Target distance changed to ${String.format("%.2f", m)} m.")) }
-                                }
-                            }
-                        } else {
-                            // 其它设备：支持 "no alarm" / "have alarm" / "{type},R:{distance}cm,P:{power}"；兼容旧格式 "0" / "1,114cm,103"
-                            val lower = t.lowercase()
-                            // 无目标："no alarm" 或旧格式 "0"
-                            if (lower.startsWith("no alarm") || t == "0") {
-                                // 依据运动状态切换记录无目标，并插入一次断点
-                                if (motionActive) {
-                                    addEvent(tr(lang, "未检测到目标", "No target detected"))
-                                    if (!gapAdded) { onDistance(null); gapAdded = true }
-                                }
-                                motionActive = false
-                                loggedOn = false
-                                loggedOff = true
-                                // 无目标时重置上次目标类型，避免跨会话误判
-                                lastTargetType = null
-                                return
-                            }
-                            // "have alarm" 行无需解析，直接跳过
-                            if (lower.startsWith("have alarm")) {
-                                return
-                            }
-                            // 新格式：{目标类型},R:{距离值}cm,P:{能量值}
+                            motionActive = false
+                            loggedOn = false
+                            loggedOff = true
+                            lastTargetType = null
+                            return
+                        }
+
+                        // 2) 新格式：{目标类型},R:{距离值}cm,P:{能量值}
+                        run {
                             val rxNew = Regex("(?i)^\\s*([12])\\s*,\\s*R:\\s*([0-9]+)\\s*cm\\s*,\\s*P:\\s*([0-9]+)")
                             val mNew = rxNew.find(t)
                             if (mNew != null) {
@@ -1042,11 +1254,9 @@ fun ParamsScreen(
                                 if (cm != null) {
                                     lastRangeMm = cm * 10
                                     val meters = cm / 100f
-                                    // 首次测距行直接视为“有目标”，激活并入点
                                     motionActive = true
                                     gapAdded = false
                                     onDistance(meters)
-                                    // 目标类型切换事件
                                     val prevType = lastTargetType
                                     val typeLabelCn = if (type == 2) "微动目标" else "运动目标"
                                     val typeLabelEn = if (type == 2) "micro-motion target" else "moving target"
@@ -1060,12 +1270,14 @@ fun ParamsScreen(
                                     } else {
                                         addEvent(tr(lang, "目标距离变化至 ${String.format("%.2f", meters)} 米。", "Target distance changed to ${String.format("%.2f", meters)} m."))
                                     }
-                                    // 无论是否重复运动，均认为处于运动期，清除无运动标志以允许后续 no alarm 再次记录
                                     loggedOff = false
                                 }
                                 return
                             }
-                            // 兼容旧格式：1,114cm,103
+                        }
+
+                        // 3) 兼容旧格式：1,114cm,103
+                        run {
                             val rxOld = Regex("^1,\\s*([0-9]+)cm,\\s*([0-9]+)")
                             val mOld = rxOld.find(t)
                             if (mOld != null) {
@@ -1076,7 +1288,6 @@ fun ParamsScreen(
                                     motionActive = true
                                     gapAdded = false
                                     onDistance(meters)
-                                    // 旧格式默认为运动目标（type=1），如与上次类型不同则记录切换
                                     val prevType = lastTargetType
                                     val newType = 1
                                     if (prevType != null && prevType != newType) {
@@ -1090,6 +1301,45 @@ fun ParamsScreen(
                                 return
                             }
                         }
+
+                        // 4) DC 风格：OFF/ON/Range mm
+                        if (t.equals("OFF", true)) {
+                            pendingOn = false
+                            if (motionActive) {
+                                addEvent(tr(lang, "未检测到运动", "No motion detected"))
+                                if (!gapAdded) { onDistance(null); gapAdded = true }
+                            }
+                            motionActive = false
+                            loggedOn = false
+                            loggedOff = true
+                            return
+                        }
+                        if (t.equals("ON", true)) {
+                            val mm = lastRangeMm
+                            if (!loggedOn) {
+                                if (mm != null) { val m = mm / 1000f; addEvent(tr(lang, "检测到运动，距离 ${String.format("%.2f", m)} 米。", "Motion detected, distance ${String.format("%.2f", m)} m.")); loggedOn = true; loggedOff = false; pendingOn = false }
+                                else pendingOn = true
+                            }
+                            motionActive = true
+                            gapAdded = false
+                            loggedOff = false
+                            return
+                        }
+                        if (t.startsWith("Range ")) {
+                            val numStr = t.removePrefix("Range ").trim().takeWhile { it.isDigit() }
+                            val mmParsed = numStr.toIntOrNull()
+                            if (mmParsed != null) {
+                                val previous = lastRangeMm
+                                lastRangeMm = mmParsed
+                                val m = mmParsed / 1000f
+                                if (motionActive) onDistance(m)
+                                if (pendingOn && !loggedOn) { addEvent(tr(lang, "检测到运动，距离 ${String.format("%.2f", m)} 米。", "Motion detected, distance ${String.format("%.2f", m)} m.")); loggedOn = true; loggedOff = false; pendingOn = false }
+                                if (loggedOn && previous != null && previous != mmParsed) { addEvent(tr(lang, "目标距离变化至 ${String.format("%.2f", m)} 米。", "Target distance changed to ${String.format("%.2f", m)} m.")) }
+                            }
+                            return
+                        }
+                        // 5) 其它："have alarm" 直接跳过
+                        if (lower.startsWith("have alarm")) return
                     }
 
                     LaunchedEffect(seg, selectedIndex, rawBleTick) {
@@ -1137,7 +1387,7 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ParamsConfigContent(lang: String, gatt: BluetoothGatt?, rawBle: List<String>, rawBleTick: Int, onLogEvent: (String) -> Unit, bleChannel: Channel<String>) {
+    fun ParamsConfigContent(lang: String, gatt: BluetoothGatt?, socket: BluetoothSocket?, rawBle: List<String>, rawBleTick: Int, onLogEvent: (String) -> Unit, bleChannel: Channel<String>) {
     val context = LocalContext.current
     val sp = remember { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
@@ -1212,6 +1462,24 @@ fun ParamsConfigContent(lang: String, gatt: BluetoothGatt?, rawBle: List<String>
 
     fun sendAtCommands(g: BluetoothGatt?, lines: List<String>) {
         try {
+            // 优先使用 SPP 写入
+            val sock = socket
+            if (sock != null && sock.isConnected) {
+                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        val out = sock.outputStream
+                        lines.forEach { line ->
+                            val payload = (line + "\r\n").toByteArray()
+                            try { out.write(payload) } catch (_: Exception) {}
+                            try { out.flush() } catch (_: Exception) {}
+                            kotlinx.coroutines.delay(120)
+                        }
+                    } catch (_: Exception) {
+                        // 移除 SPP 写入失败的调试输出；回退将继续执行 BLE 逻辑
+                    }
+                }
+                return
+            }
             var ch = findWritableCharacteristic(g)
             if (ch != null) {
                 // 逐条发送，添加 CRLF
@@ -1271,6 +1539,7 @@ fun ParamsConfigContent(lang: String, gatt: BluetoothGatt?, rawBle: List<String>
     fun startHandshake(commands: List<String>) {
         if (handshakeState != HandshakeState.IDLE) return
         commandQueue = commands
+        // 在按钮操作场景下，无论 BLE 还是 SPP，都保持 AA 握手与 STOP/TOP 等待
         handshakeState = HandshakeState.WAITING_FOR_STOP
         handshakeInitiatedTick = rawBleTick
         // Drain any previous BLE lines to avoid false STOP/TOP triggers
@@ -1504,7 +1773,7 @@ fun ParamsConfigContent(lang: String, gatt: BluetoothGatt?, rawBle: List<String>
         }
         // 单独更新：HoldFrame
         if (pendingHoldFrame != null) {
-            val hold_time = (pendingHoldFrame!! / 2)
+            val hold_time = (pendingHoldFrame!! / 10)
             if (delaySec != hold_time) { delaySec = hold_time; changed = true }
         }
         // 更新六项距离的UI值（单位：米）
@@ -1652,7 +1921,7 @@ fun ParamsConfigContent(lang: String, gatt: BluetoothGatt?, rawBle: List<String>
                     val r1 = kotlin.math.round(range1 * 100f).toInt()
                     val r2 = kotlin.math.round(range2 * 100f).toInt()
                     val r3 = kotlin.math.round(range3 * 100f).toInt()
-                    val hold = 2 * delaySec
+                    val hold = 10 * delaySec
                     val cmds = listOf(
                         "AT+MR1=${mr1}",
                         "AT+MR2=${mr2}",
@@ -1678,7 +1947,7 @@ fun ParamsConfigContent(lang: String, gatt: BluetoothGatt?, rawBle: List<String>
                     val r1 = kotlin.math.round(range1 * 100f).toInt()
                     val r2 = kotlin.math.round(range2 * 100f).toInt()
                     val r3 = kotlin.math.round(range3 * 100f).toInt()
-                    val hold = 2 * delaySec
+                    val hold = 10 * delaySec
                     val cmds = listOf(
                         "AT+MR1=${mr1}",
                         "AT+MR2=${mr2}",

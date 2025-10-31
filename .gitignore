@@ -16,7 +16,7 @@ app/keystore/
 # Local SDK and tools (environment-specific)
 .android-sdk/
 .tools/
-
+android-sdk/
 # Local configuration
 local.properties
 
