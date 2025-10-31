@@ -49,11 +49,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -65,6 +70,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import kotlin.math.roundToInt
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -122,6 +130,8 @@ fun RadarLinkApp() {
     val adapter: BluetoothAdapter? = bluetoothManager?.adapter
     val autoConnections = remember { mutableStateMapOf<String, BluetoothGatt?>() }
     var appLang by remember { mutableStateOf(sp.getString("language", "zh") ?: "zh") }
+    // 首次启动教学：第一次运行显示，可在设置页重新打开
+    var showOnboarding by remember { mutableStateOf(!sp.getBoolean("onboarding_done", false)) }
 
     // 统一原始数据推送：按 CRLF 行边界、去重、限制条数，并发送到 bleChannel
     fun pushRaw(raw: String) {
@@ -268,6 +278,12 @@ fun RadarLinkApp() {
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(Color(0xFF0f2745), Color(0xFF0c1f37))))
     ) {
+        if (showOnboarding) {
+            OnboardingScreen(lang = appLang) {
+                try { sp.edit().putBoolean("onboarding_done", true).apply() } catch (_: Exception) {}
+                showOnboarding = false
+            }
+        } else {
         Column(Modifier.fillMaxSize().padding(12.dp)) {
             AppHeader(lang = appLang)
             TopNav(tab = tab, onChange = { tab = it })
@@ -395,8 +411,18 @@ fun RadarLinkApp() {
                         } catch (_: Exception) {}
                     }
                 )
-                is TopTab.Settings -> SettingsScreen(lang = appLang, onLanguageChanged = { code -> appLang = code; try { sp.edit().putString("language", code).apply() } catch (_: Exception) {} })
+                is TopTab.Settings -> SettingsScreen(
+                    lang = appLang,
+                    onLanguageChanged = { code ->
+                        appLang = code; try { sp.edit().putString("language", code).apply() } catch (_: Exception) {}
+                    },
+                    onShowOnboarding = {
+                        try { sp.edit().putBoolean("onboarding_done", false).apply() } catch (_: Exception) {}
+                        showOnboarding = true
+                    }
+                )
             }
+        }
         }
     }
 }
@@ -545,7 +571,7 @@ fun DevicesScreen(lang: String, paired: List<PairedDevice>, onOpen: (PairedDevic
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-fun SettingsScreen(lang: String, onLanguageChanged: (String) -> Unit) {
+fun SettingsScreen(lang: String, onLanguageChanged: (String) -> Unit, onShowOnboarding: () -> Unit) {
     val context = LocalContext.current
     val sp = remember { context.getSharedPreferences("radarlink", Context.MODE_PRIVATE) }
     var autoReconnect by remember { mutableStateOf(sp.getBoolean("auto_reconnect", true)) }
@@ -582,7 +608,11 @@ fun SettingsScreen(lang: String, onLanguageChanged: (String) -> Unit) {
                 value = langLabel,
                 onValueChange = {},
                 modifier = Modifier.menuAnchor().fillMaxWidth(),
-                colors = TextFieldDefaults.textFieldColors(containerColor = Color(0xFF0f2340))
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color(0xFF0f2340),
+                    unfocusedContainerColor = Color(0xFF0f2340),
+                    disabledContainerColor = Color(0xFF0f2340)
+                )
             )
             ExposedDropdownMenu(expanded = langExpanded, onDismissRequest = { langExpanded = false }) {
                 langs.forEach { (label, code) ->
@@ -624,6 +654,15 @@ fun SettingsScreen(lang: String, onLanguageChanged: (String) -> Unit) {
                     shape = RoundedCornerShape(20.dp)
                 )
             }
+        }
+    }
+
+    Spacer(Modifier.height(12.dp))
+    SectionCard(title = tr(lang, "帮助与教程", "Help & Tutorial")) {
+        Text(tr(lang, "首次使用建议完整阅读教学页面。", "We recommend reading the tutorial first."), color = Color.White)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onShowOnboarding() }) { Text(tr(lang, "重新查看教程", "View Tutorial Again")) }
         }
     }
 
@@ -1878,7 +1917,11 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
                 onValueChange = {},
                 modifier = Modifier.menuAnchor().fillMaxWidth(),
                 enabled = !readOnly,
-                colors = TextFieldDefaults.textFieldColors(containerColor = Color(0xFF0f2340))
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color(0xFF0f2340),
+                    unfocusedContainerColor = Color(0xFF0f2340),
+                    disabledContainerColor = Color(0xFF0f2340)
+                )
             )
             ExposedDropdownMenu(expanded = workExpanded, onDismissRequest = { workExpanded = false }) {
                 workModes.forEachIndexed { idx, label ->
@@ -1896,7 +1939,11 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
                 onValueChange = {},
                 modifier = Modifier.menuAnchor().fillMaxWidth(),
                 enabled = !readOnly,
-                colors = TextFieldDefaults.textFieldColors(containerColor = Color(0xFF0f2340))
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color(0xFF0f2340),
+                    unfocusedContainerColor = Color(0xFF0f2340),
+                    disabledContainerColor = Color(0xFF0f2340)
+                )
             )
             ExposedDropdownMenu(expanded = installExpanded, onDismissRequest = { installExpanded = false }) {
                 installModes.forEachIndexed { idx, label ->
@@ -2094,7 +2141,7 @@ fun DistanceChart(points: List<DistancePoint>) {
                         val prev = segment[i - 1]
                         val curr = segment[i]
                         val mid = Offset((prev.x + curr.x) / 2f, (prev.y + curr.y) / 2f)
-                        path.quadraticBezierTo(prev.x, prev.y, mid.x, mid.y)
+                        path.quadraticTo(prev.x, prev.y, mid.x, mid.y)
                     }
                     path.lineTo(segment.last().x, segment.last().y)
                     drawPath(path = path, color = Color(0xFF2d7bf3), style = Stroke(width = 3f))
@@ -2122,5 +2169,267 @@ fun DistanceChart(points: List<DistancePoint>) {
     Row(Modifier.fillMaxWidth().padding(start = 58.dp, top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
         val tick = (secondsWindow / 3).coerceAtLeast(1)
         listOf(0, tick, tick * 2, secondsWindow).forEach { Text("${it}s", color = Color(0xFF9bb3d6), fontSize = 10.sp) }
+    }
+}
+
+// 首次启动教学页（带轻量动画）
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun OnboardingScreen(lang: String, onDone: () -> Unit) {
+    val pages = listOf(0, 1, 2)
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(initialPage = 0, pageCount = { pages.size })
+    val scope = rememberCoroutineScope()
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Card(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0f2340)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            androidx.compose.foundation.pager.HorizontalPager(state = pagerState) { page ->
+                when (page) {
+                    0 -> OnbBlePage(lang)
+                    1 -> OnbParamsPage(lang)
+                    else -> OnbLogsPage(lang)
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        // 页码指示器
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            repeat(pages.size) { i ->
+                val selected = pagerState.currentPage == i
+                Box(
+                    Modifier
+                        .size(if (selected) 10.dp else 8.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (selected) Color(0xFF7aa2d7) else Color(0xFF415a77))
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            val canPrev = pagerState.currentPage > 0
+            val canNext = pagerState.currentPage < pages.last()
+            OutlinedButton(onClick = { if (canPrev) scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) } }, enabled = canPrev) {
+                Text(tr(lang, "上一步", "Previous"))
+            }
+            if (canNext) {
+                Button(onClick = { scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) } }) {
+                    Text(tr(lang, "下一步", "Next"))
+                }
+            } else {
+                Button(onClick = onDone) { Text(tr(lang, "开始使用", "Start Using")) }
+            }
+        }
+    }
+}
+
+@Composable
+fun OnbBlePage(lang: String) {
+    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(tr(lang, "雷达设备配对与权限", "Radar BLE Pairing & Permissions"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        Text(
+            tr(
+                lang,
+                "为扫描并配对雷达设备，请允许蓝牙相关权限。Android 要求开启定位开关以支持 BLE 扫描；本应用不采集位置信息，权限仅用于发现与连接设备。",
+                "To scan and pair radar devices, allow Bluetooth-related permissions. Android requires Location switch ON for BLE scanning; we do not collect location, permissions are only for discovery and connection."
+            ),
+            color = Color(0xFF9bb3d6), textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(20.dp))
+        OnbBleAnim()
+    }
+}
+
+@Composable
+fun OnbBleAnim() {
+    val infinite = rememberInfiniteTransition(label = "ble")
+    val angle by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(durationMillis = 2000, easing = androidx.compose.animation.core.LinearEasing)
+        ),
+        label = "angle"
+    )
+    val pulse by infinite.animateFloat(
+        initialValue = 0.9f,
+        targetValue = 1.1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(durationMillis = 1200, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+    val alpha by infinite.animateFloat(
+        initialValue = 0.6f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(durationMillis = 1200),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "alpha"
+    )
+    Box(Modifier.size(200.dp).clip(RoundedCornerShape(16.dp)).background(Color(0x332f5b86)), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val thickness = 8.dp.toPx()
+            val sweep = 70f
+            drawCircle(Color(0x220f2340))
+            // Radar scanning arc
+            drawArc(
+                color = Color(0x667aa2d7),
+                startAngle = angle,
+                sweepAngle = sweep,
+                useCenter = false,
+                style = Stroke(width = thickness)
+            )
+            // Pulsing rings
+            val r1 = size.minDimension / 2f * 0.6f * pulse
+            val r2 = size.minDimension / 2f * 0.85f * (2 - pulse)
+            drawCircle(color = Color(0x337aa2d7), radius = r1, center = center, style = Stroke(width = 2f))
+            drawCircle(color = Color(0x22315a7d), radius = r2, center = center, style = Stroke(width = 2f))
+        }
+        Icon(Icons.Filled.Bluetooth, contentDescription = "bluetooth", tint = Color(0xFF7aa2d7), modifier = Modifier.size(72.dp).graphicsLayer { this.alpha = alpha; this.scaleX = pulse; this.scaleY = pulse })
+    }
+}
+
+@Composable
+fun OnbParamsPage(lang: String) {
+    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(tr(lang, "连接设备并配置参数", "Connect Device & Configure Params"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        Text(
+            tr(
+                lang,
+                "在“参数”页可查看并调整射频功率、触发阈值与数据窗口等配置；支持横向滑动切换已配对设备。",
+                "In the Params tab, view and adjust RF power, trigger threshold, and data window; swipe horizontally to switch paired devices."
+            ),
+            color = Color(0xFF9bb3d6), textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(20.dp))
+        OnbParamsAnim()
+    }
+}
+
+@Composable
+fun OnbParamsAnim() {
+    val infinite = rememberInfiniteTransition(label = "params")
+    val needle by infinite.animateFloat(
+        initialValue = 30f,
+        targetValue = 150f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(durationMillis = 1600, easing = androidx.compose.animation.core.LinearOutSlowInEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "needle"
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(220.dp, 140.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0x332f5b86))
+        ) {
+            Canvas(Modifier.fillMaxSize().padding(16.dp)) {
+                val radius = size.minDimension / 2f - 12.dp.toPx()
+                val base = 180f
+                // Track
+                drawArc(
+                    color = Color(0xFF224b72),
+                    startAngle = base,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    style = Stroke(width = 8.dp.toPx())
+                )
+                // Ticks
+                for (i in 0..6) {
+                    val a = base + i * (180f / 6f)
+                    val rad = (a.toDouble() / 180.0 * PI)
+                    val rIn = radius - 12.dp.toPx()
+                    val rOut = radius
+                    val x1 = center.x + cos(rad).toFloat() * rIn
+                    val y1 = center.y + sin(rad).toFloat() * rIn
+                    val x2 = center.x + cos(rad).toFloat() * rOut
+                    val y2 = center.y + sin(rad).toFloat() * rOut
+                    drawLine(Color(0xFF3a82b0), start = Offset(x1, y1), end = Offset(x2, y2), strokeWidth = 4f)
+                }
+                // Needle
+                val a = base + needle
+                val rad = (a.toDouble() / 180.0 * PI)
+                val x2 = center.x + cos(rad).toFloat() * radius
+                val y2 = center.y + sin(rad).toFloat() * radius
+                drawLine(Color(0xFF7aa2d7), start = center, end = Offset(x2, y2), strokeWidth = 6f)
+                drawCircle(Color(0xFF7aa2d7), radius = 6.dp.toPx(), center = center)
+            }
+        }
+    }
+}
+
+@Composable
+fun OnbLogsPage(lang: String) {
+    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(tr(lang, "日志与监控", "Logs & Monitoring"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        Text(
+            tr(
+                lang,
+                "“日志与监控”展示运动状态与距离曲线，可调整时间窗口与日志条数；连接后自动重连，便于持续监控。",
+                "Logs & Monitoring shows motion state and distance curve; adjust time window and log count. Auto-reconnect after pairing for continuous monitoring."
+            ),
+            color = Color(0xFF9bb3d6), textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(20.dp))
+        OnbLogsAnim()
+    }
+}
+
+@Composable
+fun OnbLogsAnim() {
+    val infinite = rememberInfiniteTransition(label = "logs")
+    val phase by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = (2 * PI).toFloat(),
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(durationMillis = 1600, easing = androidx.compose.animation.core.LinearEasing)
+        ),
+        label = "phase"
+    )
+    val progress by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = androidx.compose.animation.core.tween(durationMillis = 1600, easing = androidx.compose.animation.core.LinearEasing)
+        ),
+        label = "progress"
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(260.dp, 140.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0x332f5b86))
+        ) {
+            Canvas(Modifier.fillMaxSize().padding(16.dp)) {
+                val w = size.width
+                val h = size.height
+                val centerY = h * 0.55f
+                val amp = h * 0.25f
+                val path = Path()
+                for (x in 0..w.roundToInt()) {
+                    val fx = x.toFloat()
+                    val arg = ((fx / w).toDouble() * (2 * PI) + phase.toDouble())
+                    val y = centerY + amp * sin(arg).toFloat()
+                    if (x == 0) path.moveTo(fx, y) else path.lineTo(fx, y)
+                }
+                drawPath(path, color = Color(0xFF7aa2d7), style = Stroke(width = 6f, cap = StrokeCap.Round))
+                // Moving marker
+                val mx = progress * w
+                val marg = ((mx / w).toDouble() * (2 * PI) + phase.toDouble())
+                val my = centerY + amp * sin(marg).toFloat()
+                drawCircle(Color(0xFF3a82b0), radius = 6.dp.toPx(), center = Offset(mx, my))
+            }
+        }
     }
 }
