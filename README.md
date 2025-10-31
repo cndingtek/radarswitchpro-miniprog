@@ -1,5 +1,7 @@
 [中文](#zh) | [English](#en)
 
+[![Release](https://img.shields.io/github/v/release/cndingtek/radarlink?sort=semver)](https://github.com/cndingtek/radarlink/releases/latest) [![Downloads](https://img.shields.io/github/downloads/cndingtek/radarlink/total)](https://github.com/cndingtek/radarlink/releases) ![minSdk](https://img.shields.io/badge/minSdk-24-brightgreen) ![targetSdk](https://img.shields.io/badge/targetSdk-34-blue) ![Kotlin](https://img.shields.io/badge/Kotlin-1.9.24-7F52FF?logo=kotlin) ![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Android-3DDC84?logo=android)
+
 <a id="zh"></a>
 # RadarSwitch（雷达开关 DC59X）
 
@@ -60,6 +62,40 @@ RadarSwitch 是用于 CNDingtek 雷达开关 DC59X 的配置与诊断工具，�
 5. 查看日志与诊断：
    - 在日志页面查看设备最近运行记录与距离信息；默认显示 20 条，可在设置页调整上限。
 
+## BLE 使用指南（详尽）
+- 权限与系统要求：
+  - Android 12 及以上（API 31+）：需要 `BLUETOOTH_SCAN` 和 `BLUETOOTH_CONNECT`；部分机型需打开系统定位开关以允许扫描。
+  - Android 11 及以下（API ≤30）：需要 `BLUETOOTH`、`BLUETOOTH_ADMIN`、`ACCESS_FINE_LOCATION`。
+- 扫描建议：
+  - 建议靠近设备，确保设备通电并处于广播状态；列表中名称通常含有 `DC59X` 前缀。
+  - 若列表为空或很少：请打开系统定位开关、确认蓝牙已启用、点击刷新并等待 5–10 秒。
+- 连接与会话：
+  - 连接使用 BLE GATT，无需传统蓝牙配对；建立连接后进入参数与日志会话。
+  - 若连接不稳定：尝试靠近设备、重新扫描连接、关闭其他同时连接该设备的 App。
+- 参数与数据：
+  - 只读模式默认开启，切换到“可编辑”后方可写入参数；完成后点击保存。
+  - “恢复默认”后等待设备返回令牌以刷新最大/最小距离；刷新完成会自动保存。
+- 常见问题排查：
+  - 看不到设备：打开定位开关并重试；检查设备是否广播且靠近。
+  - 连接后无数据：重新进入诊断页或断开重连；避免多个 App 同时连接。
+  - 日志过少/过多：在设置页调整“日志条数上限”为 5/10/20（默认 20）。
+
+### 隐私与权限说明
+- 为什么需要定位开关：
+  - Android 将 BLE 扫描视为可能推断位置信息的行为（附近蓝牙信标可用于地理围栏/室内定位），因此许多机型在扫描时要求开启系统“定位”开关，即使应用本身不读取定位数据。
+  - Android 12+ 引入了 `BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT` 新权限模型；部分厂商仍将扫描与定位开关绑定以保护隐私。
+- 我们的处理与承诺：
+  - 本应用不采集、不存储 GPS 或网络定位数据；日志不包含位置信息。
+  - 仅在前台进行必要的 BLE 扫描与连接，不进行后台持续扫描。
+  - 权限仅用于发现和连接 DC59X 设备；若拒绝相关权限，你仍可浏览与扫描无关的页面。
+- 数据范围：
+  - 扫描仅读取设备广播信息（名称、地址/随机地址、服务 UUID），用于发现与连接设备。
+  - 参数与日志仅反映设备运行状态，不包含用户个人身份信息。
+- 关闭/撤销：
+  - 你可随时关闭系统定位开关或撤销蓝牙相关权限；关闭后扫描不可用，但不影响其他离线页面的浏览。
+- 企业/合规：
+  - 应用数据存储在本机；发布的 APK 不包含将位置发送到远端的逻辑。如未来引入联网功能，将在 Release 说明中明确披露。
+
 ## 界面预览
 - 扫描与连接
   
@@ -88,16 +124,38 @@ RadarSwitch 是用于 CNDingtek 雷达开关 DC59X 的配置与诊断工具，�
 > 提示：若图片未显示，请将 PNG 截图文件按上述文件名放置到 `docs/screenshots/` 目录。
 
 ## 构建与安装
+- 环境要求：
+  - `JDK 17`（Android Gradle Plugin 8.x 需要 JDK 17）。
+  - Android SDK（建议安装 `API 34`），不纳入仓库版本控制。
+  - 使用仓库内置 `Gradle Wrapper`，无需单独安装 Gradle。
+- 本地 SDK 配置（重要）：
+  - 本仓库不提交 `android-sdk/` 与 `.android-sdk/`（已在 `.gitignore` 中忽略），请在开发机上本地安装 Android SDK。
+  - 在项目根目录创建或编辑 `local.properties`，设置：
+    - Windows 示例：`sdk.dir=C:\Android\Sdk`
+    - macOS 示例：`sdk.dir=/Users/<yourname>/Library/Android/sdk`
+  - 若你需要放置在自定义路径（如 `H:/radarswitch/android-sdk`），请将实际路径填入 `sdk.dir`。该文件是本地环境配置，不会被提交。
 - 本地构建：
   - Debug 包：`./gradlew.bat assembleDebug`，输出位于 `app/build3/outputs/apk/debug/`。
   - Release 包：`./gradlew.bat assembleRelease`，输出位于 `app/build3/outputs/apk/release/`。
 - 远端下载（仅本地开发环境可用）：
   - `http://localhost:8001/app/build3/outputs/apk/release/app-release.apk`
 
+- 发布下载：
+  - 最新版页面：https://github.com/cndingtek/radarlink/releases/latest
+  - 直接下载 APK（如存在该命名）：https://github.com/cndingtek/radarlink/releases/latest/download/app-release.apk
+  - 全部版本列表：https://github.com/cndingtek/radarlink/releases
+
 ## 版本信息与发布
-- 当前版本：`versionCode=1`，`versionName=1.0.0`。
-- 标签：`v1.0.0`（已推送），详见仓库 Releases。
+- 当前版本：`versionCode=2`，`versionName=1.1.1`（以 `app/build.gradle.kts` 为准）。
+- 标签：详见仓库 Releases。
 - 变更记录：参见 `CHANGELOG.md` 的对应章节。
+
+## 历史瘦身与协作注意
+- 为瘦身仓库体积，已移除历史中的本地 SDK 目录并进行了强制更新（force push）。
+- 若你本地曾基于旧历史开发，请执行以下操作以与远端同步：
+  - `git fetch origin`
+  - `git reset --hard origin/main`
+- 请勿将本地 `android-sdk/`、`.android-sdk/`、`app/keystore/` 等本机或敏感内容提交到仓库；这些目录已在 `.gitignore` 中忽略。
 
 ## 常见问题（FAQ）
 - 安装失败或提示签名冲突？
@@ -169,6 +227,40 @@ RadarSwitch is a configuration and diagnostics tool for the CNDingtek DC59X rada
 5. Logs & diagnostics:
    - Use the Logs page to inspect recent records and distance values. Default shows 20 lines; adjust the limit in Settings.
 
+### BLE Guide (Detailed)
+- Permissions & requirements:
+  - Android 12+ (API 31+): `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT`. Some devices require Location toggle on for scanning.
+  - Android 11 and below (API ≤30): `BLUETOOTH`, `BLUETOOTH_ADMIN`, `ACCESS_FINE_LOCATION`.
+- Scanning tips:
+  - Stay close to the device and ensure it is powered and advertising; names usually include `DC59X`.
+  - If the list is empty: enable Location, ensure Bluetooth is on, refresh and wait 5–10 seconds.
+- Connection & session:
+  - BLE GATT connection is used; classic pairing is not required. After connecting, navigate to parameters and logs.
+  - If the connection is unstable: move closer, rescan/reconnect, and avoid connecting with multiple apps simultaneously.
+- Parameters & data:
+  - Read-only mode is enabled by default; switch to editable to write parameters and save.
+  - After Restore Defaults, wait for device tokens to refresh max/min distances. Values are saved automatically.
+- Troubleshooting:
+  - Device not visible: enable Location and retry; confirm device is advertising and nearby.
+  - No data after connect: revisit diagnostics page or reconnect; avoid multiple concurrent connections.
+  - Too few/many logs: adjust the log limit to 5/10/20 (default 20) in Settings.
+
+### Privacy & Permissions
+- Why Location toggle is required:
+  - Android treats BLE scanning as potentially revealing location (nearby beacons enable geofencing/indoor positioning). Many devices gate scanning behind the system Location toggle, even if the app does not read location.
+  - Android 12+ introduces `BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT`; some OEMs still bind scanning to Location for privacy.
+- Our approach & commitment:
+  - The app does not collect or store GPS or network-based location; logs contain no location data.
+  - Foreground-only BLE scanning and connection; no background continuous scanning.
+  - Permissions are used solely to discover and connect DC59X devices; if you deny them, you can still browse non-scan pages.
+- Data scope:
+  - We only read BLE advertisement info (name, address/random address, service UUIDs) to discover and connect the device.
+  - Parameters and logs reflect device status and do not include personal identity information.
+- Disable/revoke:
+  - You can turn off the system Location toggle or revoke Bluetooth-related permissions at any time; scanning becomes unavailable but offline pages remain accessible.
+- Enterprise/compliance:
+  - App data is stored on-device; the released APK has no logic to transmit location to servers. If online features are introduced later, Releases notes will disclose them.
+
 ### Screenshots
 - Scan & Connect
 
@@ -196,16 +288,38 @@ RadarSwitch is a configuration and diagnostics tool for the CNDingtek DC59X rada
 
 
 ### Build & Install
+- Requirements:
+  - `JDK 17` (Android Gradle Plugin 8.x requires JDK 17).
+  - Android SDK (recommend installing `API 34`). The SDK is not tracked in VCS.
+  - Use the included `Gradle Wrapper`; no separate Gradle installation required.
+- Local SDK configuration (important):
+  - The repository ignores `android-sdk/` and `.android-sdk/` via `.gitignore`. Install the Android SDK locally on your machine.
+  - Create or edit `local.properties` at the project root and set:
+    - Windows example: `sdk.dir=C:\\Android\\Sdk`
+    - macOS example: `sdk.dir=/Users/<yourname>/Library/Android/sdk`
+  - If you use a custom path (e.g. `H:/radarswitch/android-sdk`), put the actual path in `sdk.dir`. This file is local-only and not committed.
 - Local builds:
   - Debug: `./gradlew.bat assembleDebug`, output at `app/build3/outputs/apk/debug/`.
   - Release: `./gradlew.bat assembleRelease`, output at `app/build3/outputs/apk/release/`.
 - Local development download:
   - `http://localhost:8001/app/build3/outputs/apk/release/app-release.apk`
 
+- Releases & Downloads:
+  - Latest: https://github.com/cndingtek/radarlink/releases/latest
+  - Direct APK (if asset exists with this name): https://github.com/cndingtek/radarlink/releases/latest/download/app-release.apk
+  - All releases: https://github.com/cndingtek/radarlink/releases
+
 ### Version & Release
-- Current version: `versionCode=1`, `versionName=1.0.0`.
-- Tag: `v1.0.0` (pushed). See Releases in the repository.
+- Current version: `versionCode=2`, `versionName=1.1.1` (see `app/build.gradle.kts`).
+- Tags: see Releases in the repository.
 - Changelog: see `CHANGELOG.md`.
+
+### History Cleanup & Collaboration Notes
+- The repository history was rewritten to remove local SDK directories and a forced update was pushed.
+- If you previously worked off the old history, synchronize with:
+  - `git fetch origin`
+  - `git reset --hard origin/main`
+- Do not commit local-only or sensitive content (e.g., `android-sdk/`, `.android-sdk/`, `app/keystore/`). These are already ignored in `.gitignore`.
 
 ### FAQ
 - Installation fails or signature conflict?
