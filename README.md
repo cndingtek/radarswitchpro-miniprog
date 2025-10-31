@@ -12,7 +12,16 @@ RadarSwitch 是用于 CNDingtek 雷达开关 DC59X 的配置与诊断工具，�
   - 进入参数配置页面可读取设备参数；退出只读模式后可进行参数修改与保存。
 - 日志查看与距离诊断：
   - 支持查看设备返回的运行日志与距离信息，默认显示最近 20 条日志（可在设置页调整）。
-  - 采用增量读取的“最后 N 行”策略，兼容原始日志列表被设备裁剪的情况，保证解析稳定。
+  - 采用增量读取的"最后 N 行"策略，兼容原始日志列表被设备裁剪的情况，保证解析稳定。
+  - 日志格式解析：
+    - `have alarm\r\n`：检测到目标（无需解析具体信息）。
+    - `no alarm\r\n`：未检测到目标。
+    - `{目标类型},R:{距离值}cm,P:{能量值}\r\n`：
+      - 目标类型：1 为运动目标，2 为微动目标。
+      - 距离值：检测到目标的距离，单位为 cm。
+      - 能量值：不进行解析。
+      - 示例：`1,R:572cm,P:16\r\n` 表示检测到运动目标，距离 572cm。
+      - 示例：`2,R:355cm,P:318\r\n` 表示检测到微动目标，距离 355cm。
 - 恢复默认与距离计算：
   - 在“恢复默认”后进入等待设备响应状态，按设备返回令牌自动计算距离：
     - 最大距离：优先使用 `Range3/MR3`；若未收到，则保持默认值 `6.0`。
@@ -113,6 +122,15 @@ RadarSwitch is a configuration and diagnostics tool for the CNDingtek DC59X rada
 - Logs and distance diagnostics:
   - View recent operational logs and distance values reported by the device. By default the last 20 lines are shown (adjustable in Settings).
   - Uses an incremental "last N lines" strategy to stay robust when the device trims its original log list.
+  - Log format parsing:
+    - `have alarm\r\n`: Target detected (no specific information to parse).
+    - `no alarm\r\n`: No target detected.
+    - `{target_type},R:{distance}cm,P:{power}\r\n`:
+      - target_type: 1 for moving target, 2 for micro-motion target.
+      - distance: Detected target distance in cm.
+      - power: Not parsed.
+      - Example: `1,R:572cm,P:16\r\n` indicates a moving target at 572cm.
+      - Example: `2,R:355cm,P:318\r\n` indicates a micro-motion target at 355cm.
 - Restore Defaults and distance calculation:
   - After triggering Restore Defaults, the app waits for device responses and calculates distances based on returned tokens:
     - Max distance: prefer `Range3/MR3`; if not received, keep default `6.0`.
