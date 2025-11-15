@@ -8,8 +8,8 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <application android:label="箱当好智能雷达助手" android:icon="@mipmap/ic_launcher" android:theme="@style/Theme.RadarLinkPro">
-        <activity android:name="com.dingtek.radarlinkpro.MainActivity"
+    <application android:label="RadarSwitch Pro" android:icon="@mipmap/ic_launcher" android:theme="@style/Theme.RadarSwitchPro">
+        <activity android:name="com.dingtek.radarswitchpro.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

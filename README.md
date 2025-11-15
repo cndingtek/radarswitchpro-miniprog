@@ -1,6 +1,6 @@
 [中文](#zh) | [English](#en)
 
-[![Release](https://img.shields.io/github/v/release/cndingtek/radarlink?sort=semver)](https://github.com/cndingtek/radarlink/releases/latest) [![Downloads](https://img.shields.io/github/downloads/cndingtek/radarlink/total)](https://github.com/cndingtek/radarlink/releases) ![minSdk](https://img.shields.io/badge/minSdk-24-brightgreen) ![targetSdk](https://img.shields.io/badge/targetSdk-34-blue) ![Kotlin](https://img.shields.io/badge/Kotlin-1.9.24-7F52FF?logo=kotlin) ![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Android-3DDC84?logo=android)
+[![Release](https://img.shields.io/github/v/release/cndingtek/radarswitch-pro?sort=semver)](https://github.com/cndingtek/radarswitch-pro/releases/latest) [![Downloads](https://img.shields.io/github/downloads/cndingtek/radarswitch-pro/total)](https://github.com/cndingtek/radarswitch-pro/releases) ![minSdk](https://img.shields.io/badge/minSdk-24-brightgreen) ![targetSdk](https://img.shields.io/badge/targetSdk-34-blue) ![Kotlin](https://img.shields.io/badge/Kotlin-1.9.24-7F52FF?logo=kotlin) ![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Android-3DDC84?logo=android)
 
 <a id="zh"></a>
 # RadarSwitch（雷达开关 DC59X）
@@ -141,9 +141,9 @@ RadarSwitch 是用于 CNDingtek 雷达开关 DC59X 的配置与诊断工具，�
   - `http://localhost:8001/app/build3/outputs/apk/release/app-release.apk`
 
 - 发布下载：
-  - 最新版页面：https://github.com/cndingtek/radarlink/releases/latest
-  - 直接下载 APK（如存在该命名）：https://github.com/cndingtek/radarlink/releases/latest/download/app-release.apk
-  - 全部版本列表：https://github.com/cndingtek/radarlink/releases
+  - 最新版页面：https://github.com/cndingtek/radarswitch-pro/releases/latest
+  - 直接下载 APK（如存在该命名）：https://github.com/cndingtek/radarswitch-pro/releases/latest/download/app-release.apk
+  - 全部版本列表：https://github.com/cndingtek/radarswitch-pro/releases
 
 ## 版本信息与发布
 - 当前版本：`versionCode=2`，`versionName=1.1.1`（以 `app/build.gradle.kts` 为准）。
@@ -305,9 +305,9 @@ RadarSwitch is a configuration and diagnostics tool for the CNDingtek DC59X rada
   - `http://localhost:8001/app/build3/outputs/apk/release/app-release.apk`
 
 - Releases & Downloads:
-  - Latest: https://github.com/cndingtek/radarlink/releases/latest
-  - Direct APK (if asset exists with this name): https://github.com/cndingtek/radarlink/releases/latest/download/app-release.apk
-  - All releases: https://github.com/cndingtek/radarlink/releases
+  - Latest: https://github.com/cndingtek/radarswitch-pro/releases/latest
+  - Direct APK (if asset exists with this name): https://github.com/cndingtek/radarswitch-pro/releases/latest/download/app-release.apk
+  - All releases: https://github.com/cndingtek/radarswitch-pro/releases
 
 ### Version & Release
 - Current version: `versionCode=2`, `versionName=1.1.1` (see `app/build.gradle.kts`).
@@ -328,3 +328,11 @@ RadarSwitch is a configuration and diagnostics tool for the CNDingtek DC59X rada
   - After triggering Restore Defaults, remain on the page and wait for device tokens. On receiving `Range3/MR3` and `Range1/MR1` distances are refreshed and saved; if `Range1` is not received, Min distance falls back to `0.0`.
 - Too few or too many log lines?
   - Adjust the log upper limit in Settings to 5/10/20 (default 20).
+## 变更说明（2025-11-15）
+- 品牌更名：由 `RadarLink Pro` 更名为 `RadarSwitch Pro`。
+- 包名更新：`com.dingtek.radarlinkpro` → `com.dingtek.radarswitchpro`。
+- 应用 ID 与命名空间：`radarlinkpro.dingtek.com` → `radarswitchpro.dingtek.com`。
+- 应用显示名称（Manifest）：更新为 `RadarSwitch Pro`。
+- 日志标识：统一使用 `RadarSwitchPro`。
+- 签名别名：`radarlinkpro` → `radarswitchpro`（需确保 keystore 中存在该别名）。
+- 仓库链接：README/CHANGELOG 中的发布链接更新为 `cndingtek/radarswitch-pro`。

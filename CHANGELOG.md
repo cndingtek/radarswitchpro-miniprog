@@ -1,5 +1,19 @@
 # RadarSwitch 更新日志
 
+## v1.1.1 — 2025-11-15
+
+变更摘要：
+- 品牌更名为 `RadarSwitch Pro`（原 `RadarLink Pro`）。
+- 包名更改：`com.dingtek.radarlinkpro` → `com.dingtek.radarswitchpro`。
+- 应用 ID/命名空间更新：`radarlinkpro.dingtek.com` → `radarswitchpro.dingtek.com`。
+- 应用显示名称更新为 `RadarSwitch Pro`，统一日志 TAG 为 `RadarSwitchPro`。
+- 签名别名更新为 `radarswitchpro`（需保证 keystore 中已创建该别名）。
+- README/CHANGELOG 的仓库发布链接更新为 `cndingtek/radarswitch-pro`。
+
+构建与验证：
+- 已完成 `assembleRelease` 与 `bundleRelease` 构建；产物位于 `app/build3/outputs/apk/bundle/...`。
+- 安装验证：通过 ADB 成功安装并启动包名 `radarswitchpro.dingtek.com`。
+
 ## v1.0.0 — 2025-10-28
 
 变更摘要：
@@ -20,4 +34,4 @@
 
 标签：
 - 已创建并推送标签：`v1.0.0`
-- 仓库标签/发布页（创建后可见）：`https://github.com/cndingtek/radarlink/releases/tag/v1.0.0`
+- 仓库标签/发布页（创建后可见）：`https://github.com/cndingtek/radarswitch-pro/releases/tag/v1.0.0`

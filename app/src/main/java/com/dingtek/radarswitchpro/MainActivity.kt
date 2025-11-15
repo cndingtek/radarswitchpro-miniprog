@@ -1,4 +1,4 @@
-package com.dingtek.radarlinkpro
+package com.dingtek.radarswitchpro
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
@@ -84,8 +84,8 @@ class MainActivity : ComponentActivity() {
             isAppearanceLightNavigationBars = false
         }
         setContent {
-            RadarLinkTheme {
-                Surface(Modifier.fillMaxSize()) { RadarLinkApp() }
+            RadarSwitchTheme {
+                Surface(Modifier.fillMaxSize()) { RadarSwitchApp() }
             }
         }
     }
@@ -109,7 +109,7 @@ data class DistancePoint(val t: Long, val meters: Float?)
 fun tr(lang: String, zh: String, en: String): String = if (lang == "en") en else zh
 
 @Composable
-fun RadarLinkApp() {
+fun RadarSwitchApp() {
     val bleChannel = remember { Channel<String>(Channel.UNLIMITED) }
     var tab: TopTab by remember { mutableStateOf<TopTab>(TopTab.Scan) }
     val pairedDevices = remember { mutableStateListOf<PairedDevice>() }
@@ -314,7 +314,7 @@ fun RadarLinkApp() {
                     onGattChanged = { g -> currentGatt = g },
                     onRssi = { v -> rssiSeries.add(RssiPoint(System.currentTimeMillis(), v)) },
                     onLogEvent = { msg ->
-                        try { Log.d("RadarLinkPro", msg) } catch (_: Exception) {}
+                        try { Log.d("RadarSwitchPro", msg) } catch (_: Exception) {}
                         // 统一入口简单去重：避免连续重复文案刷屏
                         if (eventLogs.firstOrNull() != msg) eventLogs.add(0, msg)
                         val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
@@ -387,7 +387,7 @@ fun RadarLinkApp() {
                     gatt = currentGatt,
                     socket = pairedDevices.getOrNull(selectedPairedIndex)?.let { sppSockets[it.mac] },
                     onLogEvent = { msg ->
-                        try { Log.d("RadarLinkPro", msg) } catch (_: Exception) {}
+                        try { Log.d("RadarSwitchPro", msg) } catch (_: Exception) {}
                         eventLogs.add(0, msg)
                         val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
                         try {
@@ -441,7 +441,7 @@ fun AppHeader(lang: String) {
             ) { Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color.White) }
             Spacer(Modifier.width(10.dp))
             Column {
-                Text("RadarLink Pro", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text("RadarSwitch Pro", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 Text(tr(lang, "雷达开关智能控制器", "Radar Switch Smart Controller"), color = Color(0xFF9bb3d6), fontSize = 12.sp)
             }
         }
@@ -698,7 +698,7 @@ fun SettingsScreen(lang: String, onLanguageChanged: (String) -> Unit, onShowOnbo
         val pkg = try { pm.getPackageInfo(context.packageName, 0) } catch (_: Exception) { null }
         val ver = pkg?.versionName ?: "未知版本"
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("RadarLink Pro", color = Color.White)
+            Text("RadarSwitch Pro", color = Color.White)
             Text(tr(lang, "版本：$ver", "Version: $ver"), color = Color(0xFF9bb3d6), fontSize = 12.sp)
             val devZh = "深圳鼎恒泰物联科技有限公司"
             val devEn = "Shenzhen Dingtek IoT Technology Corp.,Ltd."
@@ -963,7 +963,7 @@ fun ScanScreen(
                             break
                         } catch (e1: Exception) {
                             lastErr = e1
-                            try { Log.e("RadarLinkPro", "Secure RFCOMM connect failed for ${u}: ${e1.message}") } catch (_: Exception) {}
+                            try { Log.e("RadarSwitchPro", "Secure RFCOMM connect failed for ${u}: ${e1.message}") } catch (_: Exception) {}
                             try { sock?.close() } catch (_: Exception) {}
                             // 非安全 RFCOMM 重试
                             try {
@@ -976,7 +976,7 @@ fun ScanScreen(
                                 break
                             } catch (e2: Exception) {
                                 lastErr = e2
-                                try { Log.e("RadarLinkPro", "Insecure RFCOMM connect failed for ${u}: ${e2.message}") } catch (_: Exception) {}
+                                try { Log.e("RadarSwitchPro", "Insecure RFCOMM connect failed for ${u}: ${e2.message}") } catch (_: Exception) {}
                                 try { sock?.close() } catch (_: Exception) {}
                             }
                         }

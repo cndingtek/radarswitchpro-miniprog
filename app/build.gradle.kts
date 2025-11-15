@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "radarlinkpro.dingtek.com"
+    namespace = "radarswitchpro.dingtek.com"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "radarlinkpro.dingtek.com"
+        applicationId = "radarswitchpro.dingtek.com"
         minSdk = 24
         targetSdk = 34
         versionCode = 2
@@ -33,7 +33,6 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            // 使用正式release签名
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
