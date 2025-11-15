@@ -101,6 +101,10 @@ RadarSwitch 是用于 CNDingtek 雷达开关 DC59X 的配置与诊断工具，�
   
   ![扫描与连接](docs/screenshots/scan.png)
 
+- 设备页
+  
+  ![设备页](docs/screenshots/devices.png)
+
 - 参数页（只读）
   
   ![参数页（只读）](docs/screenshots/params-readonly.png)
@@ -265,6 +269,10 @@ RadarSwitch is a configuration and diagnostics tool for the CNDingtek DC59X rada
 - Scan & Connect
 
   ![Scan & Connect](docs/screenshots/scan.png)
+
+- Devices
+  
+  ![Devices](docs/screenshots/devices.png)
 
 - Parameters (Read-only)
 
