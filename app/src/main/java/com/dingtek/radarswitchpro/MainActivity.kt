@@ -42,6 +42,8 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -150,8 +152,8 @@ fun RadarSwitchApp() {
             }
             idx = rawBuf.indexOf('\n')
         }
-        val limit = try { sp.getInt("log_limit", 5) } catch (_: Exception) { 5 }
-        try { while (rawBleLines.size > limit) rawBleLines.removeLast() } catch (_: Exception) {}
+        val bleLimit = try { sp.getInt("ble_limit", 50) } catch (_: Exception) { 50 }
+        try { while (rawBleLines.size > bleLimit) rawBleLines.removeLast() } catch (_: Exception) {}
         if (addedCount > 0) rawBleTick += addedCount
     }
 
@@ -193,7 +195,7 @@ fun RadarSwitchApp() {
         pairedDevices.forEach { pd ->
             if (!autoConnections.containsKey(pd.mac)) {
                 val dev: BluetoothDevice? = try { adapter?.getRemoteDevice(pd.mac) } catch (_: Exception) { null }
-                val gatt = dev?.connectGatt(context, /*autoConnect*/ true, object : BluetoothGattCallback() {
+                val gatt = try { dev?.connectGatt(context, /*autoConnect*/ true, object : BluetoothGattCallback() {
                     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                         if (newState == BluetoothProfile.STATE_CONNECTED) {
                             currentGatt = gatt
@@ -222,7 +224,9 @@ fun RadarSwitchApp() {
                                 savePairedToPrefs()
                             }
                             autoConnections.remove(gatt.device.address)
-                            try { gatt.close() } catch (_: Exception) {}
+                            if (hasBlePermissions(context)) {
+                                try { gatt.close() } catch (_: SecurityException) {}
+                            }
                         }
                     }
                     override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
@@ -257,7 +261,7 @@ fun RadarSwitchApp() {
                         // 避免与当前会话的 GATT 重复记录原始BLE，统一由 ScanScreen 的回调处理
                         return
                     }
-                })
+                }) } catch (_: SecurityException) { null }
                 if (gatt != null) autoConnections[pd.mac] = gatt
             }
         }
@@ -267,7 +271,9 @@ fun RadarSwitchApp() {
         rssiSeries.clear()
         if (currentGatt != null) {
             while (currentGatt != null) {
-                try { currentGatt?.readRemoteRssi() } catch (_: Exception) {}
+                if (hasBlePermissions(context)) {
+                    try { currentGatt?.readRemoteRssi() } catch (_: SecurityException) {}
+                }
                 delay(1000)
             }
         }
@@ -292,9 +298,11 @@ fun RadarSwitchApp() {
                 is TopTab.Scan -> ScanScreen(
                     lang = appLang,
                     autoConnectMacs = try {
-                        val bm = context.getSystemService(BluetoothManager::class.java)
-                        val ad = bm?.adapter
-                        ad?.bondedDevices?.map { it.address } ?: emptyList()
+                        if (hasBlePermissions(context)) {
+                            val bm = context.getSystemService(BluetoothManager::class.java)
+                            val ad = bm?.adapter
+                            try { ad?.bondedDevices?.map { it.address } ?: emptyList() } catch (_: SecurityException) { emptyList() }
+                        } else emptyList()
                     } catch (_: Exception) { emptyList() },
                     onPaired = { pd ->
                         // 更新或新增配对设备
@@ -364,7 +372,9 @@ fun RadarSwitchApp() {
                     val dev = try { adapter?.getRemoteDevice(pd.mac) } catch (_: Exception) { null }
                     try { val m = dev?.javaClass?.getMethod("removeBond"); m?.invoke(dev) } catch (_: Exception) {}
                     // 若存在自动连接，先断开并移除
-                    try { autoConnections[pd.mac]?.close() } catch (_: Exception) {}
+                    if (hasBlePermissions(context)) {
+                        try { autoConnections[pd.mac]?.close() } catch (_: SecurityException) {}
+                    }
                     autoConnections.remove(pd.mac)
                     // 关闭并清除 SPP Socket
                     try { sppSockets[pd.mac]?.close() } catch (_: Exception) {}
@@ -719,7 +729,8 @@ fun SettingsScreen(lang: String, onLanguageChanged: (String) -> Unit, onShowOnbo
 fun hasBlePermissions(context: Context): Boolean =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
     } else {
         ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
@@ -801,12 +812,25 @@ fun ScanScreen(
         }
     }
 
-    val permissions = remember { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT) else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION) }
+    val permissions = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            arrayOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+        else
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+    }
     var scanCb by remember { mutableStateOf<ScanCallback?>(null) }
 
     fun connectToDevice(nameGuess: String, mac: String) {
         val dev: BluetoothDevice? = adapter?.getRemoteDevice(mac)
-        dev?.connectGatt(context, false, object : BluetoothGattCallback() {
+        try { dev?.connectGatt(context, false, object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     connectedMac = gatt.device.address
@@ -871,19 +895,23 @@ fun ScanScreen(
                 var idx = incomingBuf.indexOf("\r\n")
                 while (idx >= 0) { val line = incomingBuf.substring(0, idx); handleLine(line); incomingBuf = incomingBuf.substring(idx + 2); idx = incomingBuf.indexOf("\r\n") }
             }
-        })
+        }) } catch (_: SecurityException) {}
     }
 
     // SPP 连接与读取循环（优先使用 SPP，失败时回退到 BLE）
     fun connectSpp(nameGuess: String, mac: String) {
         // 优先解析可用于 SPP 的经典/双模设备，避免仅 LE 设备地址导致连接失败
         val fromMac: BluetoothDevice? = try { adapter?.getRemoteDevice(mac) } catch (_: Exception) { null }
-        val bonded = try { adapter?.bondedDevices?.toList() } catch (_: Exception) { null } ?: emptyList()
+        val bonded = try {
+            if (hasBlePermissions(context)) {
+                try { adapter?.bondedDevices?.toList() } catch (_: SecurityException) { null }
+            } else null
+        } catch (_: Exception) { null } ?: emptyList()
         val devCandidates = mutableListOf<BluetoothDevice>()
         // 1) 精确地址命中（系统配对列表中）
         bonded.firstOrNull { it.address.equals(mac, ignoreCase = true) }?.let { devCandidates.add(it) }
         // 2) 如果从 MAC 获取到设备且不是纯 LE，则加入候选
-        if (fromMac != null && fromMac.type != BluetoothDevice.DEVICE_TYPE_LE) {
+        if (fromMac != null && try { fromMac.type != BluetoothDevice.DEVICE_TYPE_LE } catch (_: SecurityException) { false }) {
             if (devCandidates.none { it.address == fromMac.address }) devCandidates.add(fromMac)
         }
         // 2.5) 针对双模设备：尝试按 BLE->SPP 偏移的地址（最后字节 ±1）
@@ -906,7 +934,7 @@ fun ScanScreen(
                         if (devCandidates.none { it.address == d.address }) devCandidates.add(d)
                     }
                     val dm = try { adapter?.getRemoteDevice(a) } catch (_: Exception) { null }
-                    if (dm != null && dm.type != BluetoothDevice.DEVICE_TYPE_LE) {
+                    if (dm != null && try { dm.type != BluetoothDevice.DEVICE_TYPE_LE } catch (_: SecurityException) { false }) {
                         if (devCandidates.none { it.address == dm.address }) devCandidates.add(dm)
                     }
                 }
@@ -914,7 +942,7 @@ fun ScanScreen(
         }
         // 3) 按名称匹配（处理 BLE 与经典地址不同的设备）
         if (devCandidates.isEmpty()) {
-            bonded.filter { (it.name ?: "") == nameGuess }.forEach { d ->
+            bonded.filter { try { (it.name ?: "") == nameGuess } catch (_: SecurityException) { false } }.forEach { d ->
                 if (devCandidates.none { it.address == d.address }) devCandidates.add(d)
             }
         }
@@ -934,46 +962,64 @@ fun ScanScreen(
 
                 // 逐个候选设备尝试：优先使用标准 SPP UUID，再回退到反射通道
                 for (dev in devCandidates) {
-                    val typeStr = when (dev.type) {
-                        BluetoothDevice.DEVICE_TYPE_CLASSIC -> "CLASSIC"
-                        BluetoothDevice.DEVICE_TYPE_DUAL -> "DUAL"
-                        BluetoothDevice.DEVICE_TYPE_LE -> "LE"
-                        else -> dev.type.toString()
-                    }
+                    val typeStr = try {
+                        when (dev.type) {
+                            BluetoothDevice.DEVICE_TYPE_CLASSIC -> "CLASSIC"
+                            BluetoothDevice.DEVICE_TYPE_DUAL -> "DUAL"
+                            BluetoothDevice.DEVICE_TYPE_LE -> "LE"
+                            else -> dev.type.toString()
+                        }
+                    } catch (_: SecurityException) { "UNKNOWN" }
                     // 移除 SPP 目标设备类型的调试输出
 
                     // 拉取 SDP UUID（可选），但始终将标准 SPP UUID 放在首位
                     val uuids = mutableListOf<java.util.UUID>()
                     uuids.add(defaultSpp)
-                    try { dev.fetchUuidsWithSdp() } catch (_: Exception) {}
+                    if (hasBlePermissions(context)) {
+                        try { dev.fetchUuidsWithSdp() } catch (_: SecurityException) {}
+                    }
                     try { kotlinx.coroutines.delay(500) } catch (_: Exception) {}
-                    val sdp = try { dev.uuids?.mapNotNull { it?.uuid } ?: emptyList() } catch (_: Exception) { emptyList() }
+                    val sdp = try {
+                        if (hasBlePermissions(context)) {
+                            try { dev.uuids?.mapNotNull { it?.uuid } ?: emptyList() } catch (_: SecurityException) { emptyList() }
+                        } else emptyList()
+                    } catch (_: Exception) { emptyList() }
                     sdp.filter { it != defaultSpp }.forEach { uuids.add(it) }
                     // 移除 SPP UUID 尝试的调试输出
 
                     for (u in uuids) {
-                        try { adapter?.cancelDiscovery() } catch (_: Exception) {}
+                        if (hasBlePermissions(context)) {
+                            try { adapter?.cancelDiscovery() } catch (_: SecurityException) {}
+                        }
                         // 先尝试安全 RFCOMM
                         try {
+                            if (!hasBlePermissions(context)) throw SecurityException()
                             val s1 = dev.createRfcommSocketToServiceRecord(u)
                             s1.connect()
                             sock = s1
                             connected = true
                             usedDevice = dev
                             break
+                        } catch (se: SecurityException) {
+                            lastErr = se
                         } catch (e1: Exception) {
                             lastErr = e1
                             try { Log.e("RadarSwitchPro", "Secure RFCOMM connect failed for ${u}: ${e1.message}") } catch (_: Exception) {}
                             try { sock?.close() } catch (_: Exception) {}
                             // 非安全 RFCOMM 重试
                             try {
+                                if (!hasBlePermissions(context)) throw SecurityException()
                                 val s2 = dev.createInsecureRfcommSocketToServiceRecord(u)
-                                try { adapter?.cancelDiscovery() } catch (_: Exception) {}
+                                if (hasBlePermissions(context)) {
+                                    try { adapter?.cancelDiscovery() } catch (_: SecurityException) {}
+                                }
                                 s2.connect()
                                 sock = s2
                                 connected = true
                                 usedDevice = dev
                                 break
+                            } catch (se: SecurityException) {
+                                lastErr = se
                             } catch (e2: Exception) {
                                 lastErr = e2
                                 try { Log.e("RadarSwitchPro", "Insecure RFCOMM connect failed for ${u}: ${e2.message}") } catch (_: Exception) {}
@@ -989,7 +1035,11 @@ fun ScanScreen(
                 val usedMac = usedDevice?.address ?: mac
                 connectedMac = usedMac
                 onSppSocket(usedMac, sock)
-                val realName = try { usedDevice?.name } catch (_: Exception) { null }
+                val realName = try {
+                    if (hasBlePermissions(context)) {
+                        try { usedDevice?.name } catch (_: SecurityException) { null }
+                    } else null
+                } catch (_: Exception) { null }
                 val useName = if (!realName.isNullOrBlank()) realName!! else nameGuess
                 onPaired(PairedDevice(useName, usedMac, online = true, lastConnectedMs = System.currentTimeMillis()))
                 // 移除 SPP 已连接的调试输出
@@ -1036,7 +1086,11 @@ fun ScanScreen(
                 // 断开处理（移除 SPP 已断开的调试输出）
                 onSppSocket(usedMac, null)
                 if (connectedMac == usedMac) connectedMac = null
-                val realName2 = try { usedDevice?.name } catch (_: Exception) { null }
+                val realName2 = try {
+                    if (hasBlePermissions(context)) {
+                        try { usedDevice?.name } catch (_: SecurityException) { null }
+                    } else null
+                } catch (_: Exception) { null }
                 val useName2 = if (!realName2.isNullOrBlank()) realName2!! else nameGuess
                 onPaired(PairedDevice(useName2, usedMac, online = false, lastConnectedMs = System.currentTimeMillis()))
             } catch (e: Exception) {
@@ -1056,7 +1110,9 @@ fun ScanScreen(
         scanCb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val dev = result.device
-                val name = dev?.name ?: result.scanRecord?.deviceName ?: "未知设备"
+                val name = try {
+                    if (hasBlePermissions(context)) { try { dev?.name } catch (_: SecurityException) { null } } else null
+                } catch (_: Exception) { null } ?: result.scanRecord?.deviceName ?: "未知设备"
                 val mac = dev?.address ?: ""
                 val rssi = result.rssi
                 if (mac.isNotEmpty()) {
@@ -1068,14 +1124,16 @@ fun ScanScreen(
             override fun onBatchScanResults(results: List<ScanResult>) { results.forEach { r -> onScanResult(0, r) } }
             override fun onScanFailed(errorCode: Int) { permissionError = "扫描失败: $errorCode"; scanning = false }
         }
-        scanner?.startScan(scanCb)
+        if (hasBlePermissions(context)) {
+            try { scanner?.startScan(scanCb) } catch (_: SecurityException) { permissionError = "权限不足，无法开始扫描" }
+        } else { permissionError = "权限不足，无法开始扫描" }
         // 同步启动经典蓝牙设备发现，接收 ACTION_FOUND 广播，将设备加入列表（kind=CLASSIC）
         classicReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 if (intent?.action == BluetoothDevice.ACTION_FOUND) {
                     val dev: BluetoothDevice? = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                    val name = dev?.name ?: "未知设备"
-                    val mac = dev?.address ?: ""
+                    val name = try { if (hasBlePermissions(context)) { try { dev?.name } catch (_: SecurityException) { null } } else null } catch (_: Exception) { null } ?: "未知设备"
+                    val mac = try { if (hasBlePermissions(context)) { try { dev?.address } catch (_: SecurityException) { null } } else null } catch (_: Exception) { null } ?: ""
                     val rssi = try { intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE).toInt() } catch (_: Exception) { 0 }
                     if (mac.isNotEmpty()) {
                         val idx = devices.indexOfFirst { it.mac == mac }
@@ -1086,20 +1144,37 @@ fun ScanScreen(
             }
         }
         try { context.registerReceiver(classicReceiver, IntentFilter(BluetoothDevice.ACTION_FOUND)) } catch (_: Exception) {}
-        try { adapter?.startDiscovery() } catch (_: Exception) {}
+        if (hasBlePermissions(context)) {
+            try { adapter?.startDiscovery() } catch (_: SecurityException) {}
+        }
+    }
+
+    val fineLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) { permissionError = null; startScanInternal() } else { permissionError = "需要精确位置权限以进行扫描" }
     }
 
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
-        val ok = res.all { it.value }
-        if (ok) { permissionError = null; startScanInternal() } else { permissionError = "蓝牙权限未授权，无法进行扫描" }
+        val allGranted = res.all { it.value }
+        if (allGranted) { permissionError = null; startScanInternal(); return@rememberLauncherForActivityResult }
+        val fineGranted = res[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        val scanGranted = res[Manifest.permission.BLUETOOTH_SCAN] == true || Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+        val connectGranted = res[Manifest.permission.BLUETOOTH_CONNECT] == true || Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+        if (scanGranted && connectGranted && !fineGranted) { fineLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) }
+        else { permissionError = "蓝牙权限未授权，无法进行扫描" }
     }
 
     fun startScan() { if (!hasBlePermissions(context)) permLauncher.launch(permissions) else startScanInternal() }
     fun stopScan() {
         scanning = false
-        scanCb?.let { scanner?.stopScan(it) }
+        scanCb?.let {
+            if (hasBlePermissions(context)) {
+                try { scanner?.stopScan(it) } catch (_: SecurityException) {}
+            }
+        }
         scanCb = null
-        try { adapter?.cancelDiscovery() } catch (_: Exception) {}
+        if (hasBlePermissions(context)) {
+            try { adapter?.cancelDiscovery() } catch (_: SecurityException) {}
+        }
         classicReceiver?.let { try { context.unregisterReceiver(it) } catch (_: Exception) {} }
         classicReceiver = null
     }
@@ -1422,7 +1497,7 @@ fun ParamsScreen(
     }
 }
 
-enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
+enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS, WAITING_FOR_OK }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1433,9 +1508,11 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
     var readOnly by remember { mutableStateOf(sp.getBoolean("readonly_mode", true)) }
     var awaitingReset by remember { mutableStateOf(false) }
     var resetStartTick by remember { mutableStateOf(0) }
+    var resetStartTime by remember { mutableStateOf(0L) }
     var handshakeState by remember { mutableStateOf(HandshakeState.IDLE) }
     var commandQueue by remember { mutableStateOf<List<String>>(emptyList()) }
     var handshakeInitiatedTick by remember { mutableStateOf(0) }
+    var lastAction by remember { mutableStateOf<String?>(null) }
     // 累积等待解析的键值，避免日志裁剪导致丢失
     var pendingHoldFrame by remember { mutableStateOf<Int?>(null) }
     var pendingMr1Cm by remember { mutableStateOf<Int?>(null) }
@@ -1445,13 +1522,28 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
     var pendingRange2Cm by remember { mutableStateOf<Int?>(null) }
     var pendingRange3Cm by remember { mutableStateOf<Int?>(null) }
     var pendingTrith by remember { mutableStateOf<Int?>(null) }
+    // 低功耗版本新增参数
+    var pendingFastTime by remember { mutableStateOf<Int?>(null) }
+    var pendingSlowTime by remember { mutableStateOf<Int?>(null) }
+    var pendingHOLDONTH by remember { mutableStateOf<Int?>(null) }
+    var pendingMR1TH by remember { mutableStateOf<Int?>(null) }
+    var pendingMR2TH by remember { mutableStateOf<Int?>(null) }
+    var pendingMR3TH by remember { mutableStateOf<Int?>(null) }
+    var pendingR1TH by remember { mutableStateOf<Int?>(null) }
+    var pendingR2TH by remember { mutableStateOf<Int?>(null) }
+    var pendingR3TH by remember { mutableStateOf<Int?>(null) }
+    
+    // 低功耗版本UI状态变量
+    var enterDelay by remember { mutableStateOf(sp.getInt("enter_delay", 1)) } // 进入延迟 = TRITH * SlowTime/100
+    var exitDelay by remember { mutableStateOf(sp.getInt("exit_delay", 1)) } // 离开延迟 = HoldFrame * FastTime/1000
+    var holdOnTh by remember { mutableStateOf(sp.getInt("hold_on_th", 1)) } // 触发灵敏度 = HOLDONTH
+    var currentSlowTime by remember { mutableStateOf(sp.getInt("slow_time", 500)) } // 当前SlowTime值
+    var currentFastTime by remember { mutableStateOf(sp.getInt("fast_time", 500)) } // 当前FastTime值
+    
     // 六项距离（米）：运动 MRange1/2/3 与存在 Range1/2/3
-    var mRange1 by remember { mutableStateOf(sp.getFloat("mrange1", 2.0f)) }
-    var mRange2 by remember { mutableStateOf(sp.getFloat("mrange2", 4.0f)) }
-    var mRange3 by remember { mutableStateOf(sp.getFloat("mrange3", 6.0f)) }
-    var range1 by remember { mutableStateOf(sp.getFloat("range1", 1.5f)) }
-    var range2 by remember { mutableStateOf(sp.getFloat("range2", 3.0f)) }
-    var range3 by remember { mutableStateOf(sp.getFloat("range3", 4.5f)) }
+    var range1 by remember { mutableStateOf(sp.getFloat("range1", 2.0f)) }
+    var range2 by remember { mutableStateOf(sp.getFloat("range2", 4.0f)) }
+    var range3 by remember { mutableStateOf(sp.getFloat("range3", 6.0f)) }
     var sensitivity by remember { mutableStateOf(sp.getInt("sensitivity", 2)) }
     var delaySec by remember { mutableStateOf(sp.getInt("delay_sec", 30)) }
     var workModeIdx by remember { mutableStateOf(sp.getInt("work_mode", 0)) }
@@ -1463,14 +1555,16 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
         try {
             sp.edit()
                 .putBoolean("readonly_mode", readOnly)
-                .putFloat("mrange1", mRange1)
-                .putFloat("mrange2", mRange2)
-                .putFloat("mrange3", mRange3)
                 .putFloat("range1", range1)
                 .putFloat("range2", range2)
                 .putFloat("range3", range3)
                 .putInt("sensitivity", sensitivity)
                 .putInt("delay_sec", delaySec)
+                .putInt("enter_delay", enterDelay)
+                .putInt("exit_delay", exitDelay)
+                .putInt("hold_on_th", holdOnTh)
+                .putInt("slow_time", currentSlowTime)
+                .putInt("fast_time", currentFastTime)
                 .putInt("work_mode", workModeIdx)
                 .putInt("install_mode", installModeIdx)
                 .apply()
@@ -1536,7 +1630,9 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
                                     android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
                                 else android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                             } catch (_: Exception) {}
-                            try { g?.writeCharacteristic(ch) } catch (_: Exception) {}
+                            if (hasBlePermissions(context)) {
+                                try { g?.writeCharacteristic(ch) } catch (_: SecurityException) {}
+                            }
                             kotlinx.coroutines.delay(25)
                             offset += sliceLen
                         }
@@ -1546,7 +1642,9 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
                 }
             } else {
                 // 未找到可写特性：触发服务发现，稍后重试一次
-                try { g?.discoverServices() } catch (_: Exception) {}
+                if (hasBlePermissions(context)) {
+                    try { g?.discoverServices() } catch (_: SecurityException) {}
+                }
                 scope.launch {
                     kotlinx.coroutines.delay(500)
                     val retry = findWritableCharacteristic(g)
@@ -1564,7 +1662,9 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
                                         android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
                                     else android.bluetooth.BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                                 } catch (_: Exception) {}
-                                try { g?.writeCharacteristic(retry) } catch (_: Exception) {}
+                                if (hasBlePermissions(context)) {
+                                    try { g?.writeCharacteristic(retry) } catch (_: SecurityException) {}
+                                }
                                 kotlinx.coroutines.delay(25)
                                 offset += sliceLen
                             }
@@ -1603,33 +1703,55 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
 
 
     LaunchedEffect(handshakeState, bleChannel) {
-        if (handshakeState != HandshakeState.WAITING_FOR_STOP) return@LaunchedEffect
-
-        for (line in bleChannel) {
-            val stream = line.uppercase()
-            if (stream.contains("STOP") || stream.contains("TOP")) {
-                onLogEvent(tr(lang, "收到应答，发送实际指令...", "Received ACK, sending actual commands..."))
-                handshakeState = HandshakeState.SENDING_COMMANDS
-                sendAtCommands(gatt, commandQueue)
-                // 指令发送后，很快重置状态
-                scope.launch {
-                    delay(500)
+        if (handshakeState == HandshakeState.WAITING_FOR_STOP) {
+            for (line in bleChannel) {
+                val stream = line.uppercase()
+                if (stream.contains("STOP") || stream.contains("TOP")) {
+                    onLogEvent(tr(lang, "收到应答，发送实际指令...", "Received ACK, sending actual commands..."))
+                    handshakeState = HandshakeState.SENDING_COMMANDS
+                    sendAtCommands(gatt, commandQueue)
+                    // 进入等待OK状态
+                    handshakeState = HandshakeState.WAITING_FOR_OK
+                    break // Exit the loop after handling the response
+                }
+            }
+        } else if (handshakeState == HandshakeState.WAITING_FOR_OK) {
+            // 等待AT+OK响应
+            for (line in bleChannel) {
+                val stream = line.uppercase()
+                if (stream.contains("OK")) {
+                    onLogEvent(tr(lang, "收到AT+OK响应", "Received AT+OK response"))
+                    
+                    // 根据操作类型显示相应的Toast
+                    when (lastAction) {
+                        "save" -> {
+                            android.widget.Toast.makeText(context, tr(lang, "保存配置成功", "Configuration saved successfully"), android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        "reset" -> {
+                            android.widget.Toast.makeText(context, tr(lang, "恢复默认参数成功", "Default parameters restored successfully"), android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        "read" -> {
+                            android.widget.Toast.makeText(context, tr(lang, "读取参数成功", "Parameters read successfully"), android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    
+                    // 重置状态
                     handshakeState = HandshakeState.IDLE
                     commandQueue = emptyList()
+                    lastAction = null
+                    break
                 }
-                break // Exit the loop after handling the response
             }
         }
     }
 
     fun resetDefaults() {
-        // 六项距离默认值（单位：米）：M 2/4/6，R 1.5/3/4.5
-        mRange1 = 2.0f; mRange2 = 4.0f; mRange3 = 6.0f
-        range1 = 1.5f; range2 = 3.0f; range3 = 4.5f
-        sensitivity = 2; delaySec = 20; workModeIdx = 0; installModeIdx = 0; saveAll()
-        // 发送 AT+INIT 指令（使用通用发送函数，自动选择写入类型并在需要时触发服务发现）
+        // 发送 AT+INIT 指令来初始化参数，等待设备响应后自动更新界面
+        // 不要在这里设置默认值，让设备返回的参数决定显示值
+        saveAll()
+        lastAction = "reset"
         startHandshake(listOf("AT+INIT"))
-        onLogEvent(tr(lang, "等待设备响应…", "Awaiting device response…"))
+        onLogEvent(tr(lang, "发送AT+INIT初始化参数，等待设备响应…", "Sending AT+INIT to initialize parameters, awaiting device response…"))
         awaitingReset = true
     }
 
@@ -1650,6 +1772,7 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
                     readOnly = true
                     saveAll()
                     onLogEvent(tr(lang, "切换为只读模式，发送 AT+RESET 并等待响应…", "Switched to read-only, sent AT+RESET and awaiting response…"))
+                    lastAction = "read"
                     startHandshake(listOf("AT+RESET"))
                     awaitingReset = true
                     // 点击只读后：暂停运动/距离解析，并清空接收缓冲区
@@ -1682,51 +1805,29 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
     }
 
     Spacer(Modifier.height(12.dp))
-    // 感应距离设置：运动与存在六项
+    // 感应距离设置：低功耗版本（仅3段距离）
     SectionCard(title = tr(lang, "感应距离设置", "Sensing Distance")) {
         Column(Modifier.fillMaxWidth().then(if (readOnly) Modifier.alpha(0.5f) else Modifier)) {
-            // 运动（MRange）
-            Text(tr(lang, "运动感应距离", "Motion Sensing"), color = Color(0xFF9bb3d6), fontSize = 12.sp)
-            Spacer(Modifier.height(6.dp))
+            // 远段感应距离
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(tr(lang, "远段运动感应距离", "Far Motion Distance"), color = Color.White, modifier = Modifier.weight(1f))
-                Text(String.format("%.1f", mRange3), color = Color(0xFF9bb3d6))
-            }
-            Slider(value = mRange3, onValueChange = { if (!readOnly) mRange3 = it.coerceIn(0f, 6f) }, valueRange = 0f..6f, steps = 60, enabled = !readOnly)
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(tr(lang, "中段运动感应距离", "Mid Motion Distance"), color = Color.White, modifier = Modifier.weight(1f))
-                Text(String.format("%.1f", mRange2), color = Color(0xFF9bb3d6))
-            }
-            Slider(value = mRange2, onValueChange = { if (!readOnly) mRange2 = it.coerceIn(0f, 6f) }, valueRange = 0f..6f, steps = 60, enabled = !readOnly)
-            Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(tr(lang, "近端运动感应距离", "Near Motion Distance"), color = Color.White, modifier = Modifier.weight(1f))
-                Text(String.format("%.1f", mRange1), color = Color(0xFF9bb3d6))
-            }
-            Slider(value = mRange1, onValueChange = { if (!readOnly) mRange1 = it.coerceIn(0f, 6f) }, valueRange = 0f..6f, steps = 60, enabled = !readOnly)
-
-            Spacer(Modifier.height(12.dp))
-            // 存在（Range）
-            Text(tr(lang, "存在感应距离", "Presence Sensing"), color = Color(0xFF9bb3d6), fontSize = 12.sp)
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(tr(lang, "远段存在感应距离", "Far Presence Distance"), color = Color.White, modifier = Modifier.weight(1f))
+                Text(tr(lang, "远段感应距离", "Far Distance"), color = Color.White, modifier = Modifier.weight(1f))
                 Text(String.format("%.1f", range3), color = Color(0xFF9bb3d6))
             }
-            Slider(value = range3, onValueChange = { if (!readOnly) range3 = it.coerceIn(0f, 6f) }, valueRange = 0f..6f, steps = 60, enabled = !readOnly)
+            Slider(value = range3, onValueChange = { if (!readOnly) range3 = it.coerceIn(0f, 10f) }, valueRange = 0f..10f, steps = 100, enabled = !readOnly)
             Spacer(Modifier.height(8.dp))
+            // 中段感应距离
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(tr(lang, "中段存在感应距离", "Mid Presence Distance"), color = Color.White, modifier = Modifier.weight(1f))
+                Text(tr(lang, "中段感应距离", "Mid Distance"), color = Color.White, modifier = Modifier.weight(1f))
                 Text(String.format("%.1f", range2), color = Color(0xFF9bb3d6))
             }
-            Slider(value = range2, onValueChange = { if (!readOnly) range2 = it.coerceIn(0f, 6f) }, valueRange = 0f..6f, steps = 60, enabled = !readOnly)
+            Slider(value = range2, onValueChange = { if (!readOnly) range2 = it.coerceIn(0f, 10f) }, valueRange = 0f..10f, steps = 100, enabled = !readOnly)
             Spacer(Modifier.height(8.dp))
+            // 近段感应距离
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(tr(lang, "近端存在感应距离", "Near Presence Distance"), color = Color.White, modifier = Modifier.weight(1f))
+                Text(tr(lang, "近段感应距离", "Near Distance"), color = Color.White, modifier = Modifier.weight(1f))
                 Text(String.format("%.1f", range1), color = Color(0xFF9bb3d6))
             }
-            Slider(value = range1, onValueChange = { if (!readOnly) range1 = it.coerceIn(0f, 6f) }, valueRange = 0f..6f, steps = 60, enabled = !readOnly)
+            Slider(value = range1, onValueChange = { if (!readOnly) range1 = it.coerceIn(0f, 10f) }, valueRange = 0f..10f, steps = 100, enabled = !readOnly)
         }
     }
 
@@ -1734,6 +1835,7 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
     LaunchedEffect(awaitingReset) {
         if (awaitingReset) {
             resetStartTick = rawBleTick
+            resetStartTime = System.currentTimeMillis()
             pendingHoldFrame = null
             pendingMr1Cm = null
             pendingMr2Cm = null
@@ -1742,6 +1844,15 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
             pendingRange2Cm = null
             pendingRange3Cm = null
             pendingTrith = null
+            pendingFastTime = null
+            pendingSlowTime = null
+            pendingHOLDONTH = null
+            pendingMR1TH = null
+            pendingMR2TH = null
+            pendingMR3TH = null
+            pendingR1TH = null
+            pendingR2TH = null
+            pendingR3TH = null
         }
     }
 
@@ -1750,9 +1861,8 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
 
         // 将最近原始块拼接为连续文本；同时支持基于正则的令牌扫描，不依赖行边界
         val toRead = (rawBleTick - resetStartTick).coerceAtLeast(0)
-        // 读取最后 toRead 条新增行，兼容 rawBle 列表裁剪
-        val start = (rawBle.size - toRead).coerceAtLeast(0)
-        val newLines = if (toRead > 0) rawBle.drop(start) else emptyList()
+        // 读取最近 toRead 条新增行（rawBle 最新在头部）
+        val newLines = if (toRead > 0) rawBle.take(toRead) else emptyList()
         val stream = newLines.joinToString(separator = "")
 
         fun findIntTokenLatest(pattern: Regex): Int? = pattern.findAll(stream).lastOrNull()?.groupValues?.getOrNull(1)?.toIntOrNull()
@@ -1769,10 +1879,22 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
 
         val rxHold = Regex("(?i)\\bholdframe\\s*=\\s*(\\d+)")
         val rxTrith = Regex("(?i)\\btrith\\s*=\\s*(\\d+)")
+        val rxFastTime = Regex("(?i)\\bfasttime\\s*=\\s*(\\d+)")
+        val rxSlowTime = Regex("(?i)\\bslowtime\\s*=\\s*(\\d+)")
+        val rxHoldOnTh = Regex("(?i)\\bholdonth\\s*=\\s*(\\d+)")
+        val rxMr1Th = Regex("(?i)\\bmr1th\\s*=\\s*(\\d+)")
+        val rxMr2Th = Regex("(?i)\\bmr2th\\s*=\\s*(\\d+)")
+        val rxMr3Th = Regex("(?i)\\bmr3th\\s*=\\s*(\\d+)")
+        val rxR1Th = Regex("(?i)\\br1th\\s*=\\s*(\\d+)")
+        val rxR2Th = Regex("(?i)\\br2th\\s*=\\s*(\\d+)")
+        val rxR3Th = Regex("(?i)\\br3th\\s*=\\s*(\\d+)")
         // 兼容返回格式：Range1/Range2/Range3、MRange1/MRange3、MR1/MR3
         val rxRange1 = Regex("(?i)\\brange1\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
         val rxRange2 = Regex("(?i)\\brange2\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
         val rxRange3 = Regex("(?i)\\brange3\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxR1Plain = Regex("(?i)\\br1\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxR2Plain = Regex("(?i)\\br2\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxR3Plain = Regex("(?i)\\br3\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
         val rxMr1 = Regex("(?i)\\bmrange1\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
         val rxMr2 = Regex("(?i)\\bmrange2\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
         val rxMr3 = Regex("(?i)\\bmrange3\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
@@ -1783,15 +1905,39 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
         // 令牌级解析（即使行被拆分也能匹配）
         val holdLatest = findIntTokenLatest(rxHold)
         val trithLatest = findIntTokenLatest(rxTrith)
-        val range1Latest = findRangeCmTokenLatest(rxRange1)
-        val range2Latest = findRangeCmTokenLatest(rxRange2)
-        val range3Latest = findRangeCmTokenLatest(rxRange3)
+        val fastTimeLatest = findIntTokenLatest(rxFastTime)
+        val slowTimeLatest = findIntTokenLatest(rxSlowTime)
+        val holdOnThLatest = findIntTokenLatest(rxHoldOnTh)
+        val mr1ThLatest = findIntTokenLatest(rxMr1Th)
+        val mr2ThLatest = findIntTokenLatest(rxMr2Th)
+        val mr3ThLatest = findIntTokenLatest(rxMr3Th)
+        val r1ThLatest = findIntTokenLatest(rxR1Th)
+        val r2ThLatest = findIntTokenLatest(rxR2Th)
+        val r3ThLatest = findIntTokenLatest(rxR3Th)
+        val range1Latest = findRangeCmTokenLatest(rxRange1) ?: findRangeCmTokenLatest(rxR1Plain)
+        val range2Latest = findRangeCmTokenLatest(rxRange2) ?: findRangeCmTokenLatest(rxR2Plain)
+        val range3Latest = findRangeCmTokenLatest(rxRange3) ?: findRangeCmTokenLatest(rxR3Plain)
         val mr1TokenLatest = findRangeCmTokenLatest(rxMr1Short) ?: findRangeCmTokenLatest(rxMr1)
         val mr2TokenLatest = findRangeCmTokenLatest(rxMr2Short) ?: findRangeCmTokenLatest(rxMr2)
         val mr3TokenLatest = findRangeCmTokenLatest(rxMr3Short) ?: findRangeCmTokenLatest(rxMr3)
 
         pendingHoldFrame = holdLatest ?: pendingHoldFrame
         pendingTrith = trithLatest ?: pendingTrith
+        pendingFastTime = fastTimeLatest ?: pendingFastTime
+        pendingSlowTime = slowTimeLatest ?: pendingSlowTime
+        pendingHOLDONTH = holdOnThLatest ?: pendingHOLDONTH
+        
+        // 调试：显示解析到的参数值
+        if (holdLatest != null || trithLatest != null || fastTimeLatest != null || slowTimeLatest != null || holdOnThLatest != null) {
+            onLogEvent(tr(lang, "解析参数: HoldFrame=${holdLatest}, TRITH=${trithLatest}, FastTime=${fastTimeLatest}, SlowTime=${slowTimeLatest}, HOLDONTH=${holdOnThLatest}", 
+                              "Parsed params: HoldFrame=${holdLatest}, TRITH=${trithLatest}, FastTime=${fastTimeLatest}, SlowTime=${slowTimeLatest}, HOLDONTH=${holdOnThLatest}"))
+        }
+        pendingMR1TH = mr1ThLatest ?: pendingMR1TH
+        pendingMR2TH = mr2ThLatest ?: pendingMR2TH
+        pendingMR3TH = mr3ThLatest ?: pendingMR3TH
+        pendingR1TH = r1ThLatest ?: pendingR1TH
+        pendingR2TH = r2ThLatest ?: pendingR2TH
+        pendingR3TH = r3ThLatest ?: pendingR3TH
         // 分开记录 Range 与 MR 令牌，避免混用导致错误计算
         pendingRange1Cm = range1Latest ?: pendingRange1Cm
         pendingRange2Cm = range2Latest ?: pendingRange2Cm
@@ -1799,36 +1945,117 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
         pendingMr1Cm = mr1TokenLatest ?: pendingMr1Cm
         pendingMr2Cm = mr2TokenLatest ?: pendingMr2Cm
         pendingMr3Cm = mr3TokenLatest ?: pendingMr3Cm
+        
+        // 调试：显示解析到的距离值
+        if (range1Latest != null || range2Latest != null || range3Latest != null) {
+            onLogEvent(tr(lang, "解析距离: Range1=${range1Latest}, Range2=${range2Latest}, Range3=${range3Latest}", 
+                              "Parsed distances: Range1=${range1Latest}, Range2=${range2Latest}, Range3=${range3Latest}"))
+        }
+        if (mr1TokenLatest != null || mr2TokenLatest != null || mr3TokenLatest != null) {
+            onLogEvent(tr(lang, "解析距离: MR1=${mr1TokenLatest}, MR2=${mr2TokenLatest}, MR3=${mr3TokenLatest}", 
+                              "Parsed distances: MR1=${mr1TokenLatest}, MR2=${mr2TokenLatest}, MR3=${mr3TokenLatest}"))
+        }
 
         var changed = false
-        // 只要发现任意目标令牌，即认为已收到设备响应（即使值未变化）
-        val ackFound = (holdLatest != null) || (trithLatest != null) ||
-                (range1Latest != null) || (range2Latest != null) || (range3Latest != null) ||
-                (mr1TokenLatest != null) || (mr2TokenLatest != null) || (mr3TokenLatest != null)
-        // 单独更新：TRITH
-        if (pendingTrith != null) {
-            val sensitivityNew = pendingTrith!!.coerceIn(1, 5)
-            if (sensitivity != sensitivityNew) { sensitivity = sensitivityNew; changed = true }
+        // 等待关键参数齐备才结束等待状态，避免分片返回导致计算错误
+        val enterDelayReady = (trithLatest != null) && (slowTimeLatest != null)
+        val exitDelayReady = (holdLatest != null) && (fastTimeLatest != null)
+        val sensitivityReady = (holdOnThLatest != null)
+        val distancesReady = (range1Latest != null) && (range2Latest != null) && (range3Latest != null)
+        
+        // 调试：显示各参数准备状态
+        onLogEvent(tr(lang, "参数状态: 进入延迟就绪=${enterDelayReady}, 离开延迟就绪=${exitDelayReady}, 灵敏度就绪=${sensitivityReady}, 距离就绪=${distancesReady}", 
+                          "Param status: entry ready=${enterDelayReady}, exit ready=${exitDelayReady}, sensitivity ready=${sensitivityReady}, distances ready=${distancesReady}"))
+        
+        // 超时判断（3秒超时）
+        val elapsedTime = System.currentTimeMillis() - resetStartTime
+        val timeoutReached = elapsedTime > 3000
+        if (timeoutReached) {
+            onLogEvent(tr(lang, "参数接收超时，已等待${elapsedTime}ms", "Parameter receive timeout, waited ${elapsedTime}ms"))
         }
-        // 单独更新：HoldFrame
-        if (pendingHoldFrame != null) {
-            val hold_time = (pendingHoldFrame!! / 10)
-            if (delaySec != hold_time) { delaySec = hold_time; changed = true }
+        
+        // 计算已准备好的参数数量
+        val readyCount = listOf(enterDelayReady, exitDelayReady, sensitivityReady, distancesReady).count { it }
+        val totalRequired = 4
+        
+        // 调试：显示准备进度
+        onLogEvent(tr(lang, "参数准备进度: ${readyCount}/${totalRequired}", "Parameter ready progress: ${readyCount}/${totalRequired}"))
+        
+        // 策略：至少3个关键组准备好，或者超时，就结束等待
+        val ackFound = (readyCount >= 3) || timeoutReached
+        
+        // 先更新当前SlowTime和FastTime值（如果有新的）
+        var effectiveSlowTime = currentSlowTime
+        var effectiveFastTime = currentFastTime
+        
+        if (pendingSlowTime != null) {
+            val slowTimeNew = pendingSlowTime!!.coerceIn(100, 1000)
+            if (currentSlowTime != slowTimeNew) { 
+                currentSlowTime = slowTimeNew
+                effectiveSlowTime = slowTimeNew
+                changed = true 
+                onLogEvent(tr(lang, "更新SlowTime: ${currentSlowTime} -> ${slowTimeNew}", "Update SlowTime: ${currentSlowTime} -> ${slowTimeNew}"))
+            }
         }
-        // 更新六项距离的UI值（单位：米）
-        if (pendingMr1Cm != null) { val v = (pendingMr1Cm!! / 100f).coerceIn(0f, 6f); if (mRange1 != v) { mRange1 = v; changed = true } }
-        if (pendingMr2Cm != null) { val v = (pendingMr2Cm!! / 100f).coerceIn(0f, 6f); if (mRange2 != v) { mRange2 = v; changed = true } }
-        if (pendingMr3Cm != null) { val v = (pendingMr3Cm!! / 100f).coerceIn(0f, 6f); if (mRange3 != v) { mRange3 = v; changed = true } }
-        if (pendingRange1Cm != null) { val v = (pendingRange1Cm!! / 100f).coerceIn(0f, 6f); if (range1 != v) { range1 = v; changed = true } }
-        if (pendingRange2Cm != null) { val v = (pendingRange2Cm!! / 100f).coerceIn(0f, 6f); if (range2 != v) { range2 = v; changed = true } }
-        if (pendingRange3Cm != null) { val v = (pendingRange3Cm!! / 100f).coerceIn(0f, 6f); if (range3 != v) { range3 = v; changed = true } }
+        if (pendingFastTime != null) {
+            val fastTimeNew = pendingFastTime!!.coerceIn(100, 1000)
+            if (currentFastTime != fastTimeNew) { 
+                currentFastTime = fastTimeNew
+                effectiveFastTime = fastTimeNew
+                changed = true 
+                onLogEvent(tr(lang, "更新FastTime: ${currentFastTime} -> ${fastTimeNew}", "Update FastTime: ${currentFastTime} -> ${fastTimeNew}"))
+            }
+        }
+        
+        // 根据实际公式计算延迟时间：进入延迟 = TRITH * SlowTime/100
+        if (pendingTrith != null && effectiveSlowTime > 0) {
+            val enterDelayNew = (pendingTrith!! * effectiveSlowTime / 100).coerceIn(1, 100)
+            onLogEvent(tr(lang, "调试：当前enterDelay=${enterDelay}, TRITH=${pendingTrith}, effectiveSlowTime=${effectiveSlowTime}, 计算进入延迟=${enterDelayNew}", "Debug: current enterDelay=${enterDelay}, TRITH=${pendingTrith}, effectiveSlowTime=${effectiveSlowTime}, calculated entry delay=${enterDelayNew}"))
+            if (enterDelay != enterDelayNew) { 
+                onLogEvent(tr(lang, "更新进入延迟: ${enterDelay} -> ${enterDelayNew}", "Update entry delay: ${enterDelay} -> ${enterDelayNew}"))
+                enterDelay = enterDelayNew
+                changed = true 
+                onLogEvent(tr(lang, "进入延迟更新：TRITH=${pendingTrith} × effectiveSlowTime=${effectiveSlowTime}/100 = ${enterDelayNew}秒", "Entry delay updated: TRITH=${pendingTrith} × effectiveSlowTime=${effectiveSlowTime}/100 = ${enterDelayNew}s"))
+            }
+        }
+        // 根据实际公式计算延迟时间：离开延迟 = HoldFrame * FastTime/1000
+        if (pendingHoldFrame != null && effectiveFastTime > 0) {
+            val exitDelayNew = (pendingHoldFrame!! * effectiveFastTime / 1000).coerceIn(1, 10000)
+            onLogEvent(tr(lang, "调试：当前exitDelay=${exitDelay}, HoldFrame=${pendingHoldFrame}, effectiveFastTime=${effectiveFastTime}, 计算离开延迟=${exitDelayNew}", "Debug: current exitDelay=${exitDelay}, HoldFrame=${pendingHoldFrame}, effectiveFastTime=${effectiveFastTime}, calculated exit delay=${exitDelayNew}"))
+            if (exitDelay != exitDelayNew) { 
+                onLogEvent(tr(lang, "更新离开延迟: ${exitDelay} -> ${exitDelayNew}", "Update exit delay: ${exitDelay} -> ${exitDelayNew}"))
+                exitDelay = exitDelayNew
+                changed = true 
+                onLogEvent(tr(lang, "离开延迟更新：HoldFrame=${pendingHoldFrame} × effectiveFastTime=${effectiveFastTime}/1000 = ${exitDelayNew}秒", "Exit delay updated: HoldFrame=${pendingHoldFrame} × effectiveFastTime=${effectiveFastTime}/1000 = ${exitDelayNew}s"))
+            }
+        }
+        // 单独更新：HOLDONTH -> 触发灵敏度
+        if (pendingHOLDONTH != null) {
+            val holdOnThNew = pendingHOLDONTH!!.coerceIn(1, 10)
+            if (holdOnTh != holdOnThNew) { holdOnTh = holdOnThNew; changed = true }
+        }
+        // 更新距离的UI值（单位：米）
+        if (pendingMr1Cm != null) { val v = (pendingMr1Cm!! / 100f).coerceIn(0f, 6f); if (range1 != v) { range1 = v; changed = true } }
+        if (pendingMr2Cm != null) { val v = (pendingMr2Cm!! / 100f).coerceIn(0f, 8f); if (range2 != v) { range2 = v; changed = true } }
+        if (pendingMr3Cm != null) { val v = (pendingMr3Cm!! / 100f).coerceIn(0f, 10f); if (range3 != v) { range3 = v; changed = true } }
+        // 低功耗版本：Range1/2/3 直接更新到 range1/2/3（界面显示用）
+        if (pendingRange1Cm != null) { val v = (pendingRange1Cm!! / 100f).coerceIn(0f, 10f); if (range1 != v) { range1 = v; changed = true; onLogEvent(tr(lang, "更新Range1: ${range1} -> ${v}", "Update Range1: ${range1} -> ${v}")) } }
+        if (pendingRange2Cm != null) { val v = (pendingRange2Cm!! / 100f).coerceIn(0f, 10f); if (range2 != v) { range2 = v; changed = true; onLogEvent(tr(lang, "更新Range2: ${range2} -> ${v}", "Update Range2: ${range2} -> ${v}")) } }
+        if (pendingRange3Cm != null) { val v = (pendingRange3Cm!! / 100f).coerceIn(0f, 10f); if (range3 != v) { range3 = v; changed = true; onLogEvent(tr(lang, "更新Range3: ${range3} -> ${v}", "Update Range3: ${range3} -> ${v}")) } }
 
         // 已收到设备响应：保存更新并结束等待
         if (ackFound) {
-            if (changed) { saveAll() }
+            if (changed) { 
+                onLogEvent(tr(lang, "参数发生变化，保存设置...", "Parameters changed, saving settings..."))
+                saveAll() 
+            } else {
+                onLogEvent(tr(lang, "参数无变化，无需保存", "No parameter changes, no save needed"))
+            }
             // 结束等待状态以恢复按钮样式
             awaitingReset = false
             onLogEvent(tr(lang, "收到设备响应，结束等待", "Received response; ending wait"))
+            // Toast messages are now handled in the handshake state machine after receiving AT+OK
+            lastAction = null
         }
     }
 
@@ -1836,9 +2063,8 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
     LaunchedEffect(rawBleTick) {
         val toRead = (rawBleTick - lastRangeTick).coerceAtLeast(0)
         if (toRead <= 0) return@LaunchedEffect
-        // 读取最后 toRead 条新增行，避免因列表裁剪导致 drop 超界
-        val start = (rawBle.size - toRead).coerceAtLeast(0)
-        val newLines = rawBle.drop(start)
+        // 读取最近 toRead 条新增行（rawBle 最新在头部）
+        val newLines = rawBle.take(toRead)
         val stream = newLines.joinToString(separator = "")
         lastRangeTick = rawBleTick
 
@@ -1862,96 +2088,141 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
         val rxMr1Short = Regex("(?i)\\bmr1\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
         val rxMr2Short = Regex("(?i)\\bmr2\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
         val rxMr3Short = Regex("(?i)\\bmr3\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
-        val r1Cm = findRangeCmTokenLatest(rxRange1)
-        val r2Cm = findRangeCmTokenLatest(rxRange2)
-        val r3Cm = findRangeCmTokenLatest(rxRange3)
+        val rxR1Plain = Regex("(?i)\\br1\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxR2Plain = Regex("(?i)\\br2\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val rxR3Plain = Regex("(?i)\\br3\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(cm|m)?")
+        val r1Cm = findRangeCmTokenLatest(rxRange1) ?: findRangeCmTokenLatest(rxR1Plain)
+        val r2Cm = findRangeCmTokenLatest(rxRange2) ?: findRangeCmTokenLatest(rxR2Plain)
+        val r3Cm = findRangeCmTokenLatest(rxRange3) ?: findRangeCmTokenLatest(rxR3Plain)
         val mr1Cm = findRangeCmTokenLatest(rxMr1Short) ?: findRangeCmTokenLatest(rxMr1)
         val mr2Cm = findRangeCmTokenLatest(rxMr2Short) ?: findRangeCmTokenLatest(rxMr2)
         val mr3Cm = findRangeCmTokenLatest(rxMr3Short) ?: findRangeCmTokenLatest(rxMr3)
+        if (mr1Cm != null || mr2Cm != null || mr3Cm != null) {
+            onLogEvent(tr(lang, "解析距离: MR1=${mr1Cm}, MR2=${mr2Cm}, MR3=${mr3Cm}", 
+                              "Parsed distances: MR1=${mr1Cm}, MR2=${mr2Cm}, MR3=${mr3Cm}"))
+        }
 
         var changed = false
-        if (mr1Cm != null) { val v = (mr1Cm / 100f).coerceIn(0f, 6f); if (mRange1 != v) { mRange1 = v; changed = true } }
-        if (mr2Cm != null) { val v = (mr2Cm / 100f).coerceIn(0f, 6f); if (mRange2 != v) { mRange2 = v; changed = true } }
-        if (mr3Cm != null) { val v = (mr3Cm / 100f).coerceIn(0f, 6f); if (mRange3 != v) { mRange3 = v; changed = true } }
-        if (r1Cm != null) { val v = (r1Cm / 100f).coerceIn(0f, 6f); if (range1 != v) { range1 = v; changed = true } }
-        if (r2Cm != null) { val v = (r2Cm / 100f).coerceIn(0f, 6f); if (range2 != v) { range2 = v; changed = true } }
-        if (r3Cm != null) { val v = (r3Cm / 100f).coerceIn(0f, 6f); if (range3 != v) { range3 = v; changed = true } }
+        // 低功耗版本：使用Range1/2/3来更新range1/2/3（界面显示用）
+        if (r1Cm != null) { val v = (r1Cm / 100f).coerceIn(0f, 10f); if (range1 != v) { range1 = v; changed = true } }
+        if (r2Cm != null) { val v = (r2Cm / 100f).coerceIn(0f, 10f); if (range2 != v) { range2 = v; changed = true } }
+        if (r3Cm != null) { val v = (r3Cm / 100f).coerceIn(0f, 10f); if (range3 != v) { range3 = v; changed = true } }
+        // 保留原有的MRange解析作为备用，但低功耗版本主要使用Range
+        if (mr1Cm != null) { val v = (mr1Cm / 100f).coerceIn(0f, 6f); if (range1 != v) { range1 = v; changed = true } }
+        if (mr2Cm != null) { val v = (mr2Cm / 100f).coerceIn(0f, 8f); if (range2 != v) { range2 = v; changed = true } }
+        if (mr3Cm != null) { val v = (mr3Cm / 100f).coerceIn(0f, 10f); if (range3 != v) { range3 = v; changed = true } }
+        // 原有的Range1/2/3解析（存在感应距离）在低功耗版本中不再使用
+        // if (r1Cm != null) { val v = (r1Cm / 100f).coerceIn(0f, 6f); if (range1 != v) { range1 = v; changed = true } }
+        // if (r2Cm != null) { val v = (r2Cm / 100f).coerceIn(0f, 6f); if (range2 != v) { range2 = v; changed = true } }
+        // if (r3Cm != null) { val v = (r3Cm / 100f).coerceIn(0f, 6f); if (range3 != v) { range3 = v; changed = true } }
         // 移除旧版 max/min 兼容逻辑
         if (changed) saveAll()
     }
 
     Spacer(Modifier.height(12.dp))
-    // 灵敏度与延时
-    SectionCard(title = tr(lang, "灵敏度与延时", "Sensitivity & Delay")) {
+    // 延时设置
+    SectionCard(title = tr(lang, "延时", "Delay")) {
         Column(Modifier.fillMaxWidth().then(if (readOnly) Modifier.alpha(0.5f) else Modifier)) {
+        // 触发灵敏度 - 绑定HOLDONTH
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(tr(lang, "触发灵敏度", "Trigger Sensitivity"), color = Color.White, modifier = Modifier.weight(1f))
-            Text("${sensitivity}", color = Color(0xFF9bb3d6))
+            Text("${holdOnTh}", color = Color(0xFF9bb3d6))
         }
-        Slider(value = sensitivity.toFloat(), onValueChange = { if (!readOnly) sensitivity = it.toInt().coerceIn(1, 5) }, valueRange = 1f..5f, steps = 4, enabled = !readOnly)
+        Slider(value = holdOnTh.toFloat(), onValueChange = { if (!readOnly) holdOnTh = it.toInt().coerceIn(1, 10) }, valueRange = 1f..10f, steps = 9, enabled = !readOnly)
         Spacer(Modifier.height(8.dp))
+        // 进入延迟 - 直接等于TRITH
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(tr(lang, "感应延时", "Sensing Delay"), color = Color.White, modifier = Modifier.weight(1f))
-            Text("${delaySec}" + tr(lang, "秒", "s"), color = Color(0xFF9bb3d6))
+            Text(tr(lang, "进入延迟", "Entry Delay"), color = Color.White, modifier = Modifier.weight(1f))
+            Text("${enterDelay}" + tr(lang, "秒", "s"), color = Color(0xFF9bb3d6))
         }
-        Slider(value = delaySec.toFloat(), onValueChange = { if (!readOnly) delaySec = it.toInt() }, valueRange = 0f..60f, steps = 60, enabled = !readOnly)
+        Slider(value = enterDelay.toFloat(), onValueChange = { if (!readOnly) enterDelay = it.toInt().coerceIn(1, 20) }, valueRange = 1f..20f, steps = 19, enabled = !readOnly)
+        Spacer(Modifier.height(8.dp))
+        // 离开延迟设置：三位数字（最大999秒）
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(tr(lang, "离开延迟", "Exit Delay"), color = Color.White, modifier = Modifier.weight(1f))
+            Text("${exitDelay}" + tr(lang, "秒", "s"), color = Color(0xFF9bb3d6))
+        }
+        val exitHInitial = (exitDelay / 100).coerceIn(0, 9)
+        val exitTInitial = ((exitDelay / 10) % 10).coerceIn(0, 9)
+        val exitOInitial = (exitDelay % 10).coerceIn(0, 9)
+        var exitH by remember { mutableStateOf(exitHInitial) }
+        var exitT by remember { mutableStateOf(exitTInitial) }
+        var exitO by remember { mutableStateOf(exitOInitial) }
+        fun recomputeExit() {
+            val v0 = (exitH * 100 + exitT * 10 + exitO)
+            val v = v0.coerceIn(1, 999)
+            if (!readOnly) exitDelay = v
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            @Composable
+            fun NumberWheel(value: Int, onChange: (Int) -> Unit) {
+                Box(
+                    modifier = Modifier
+                        .width(48.dp)
+                        .height(100.dp)
+                        .background(
+                            if (readOnly) Color(0xFF3a3a3a) else Color(0xFF2196F3), 
+                            RoundedCornerShape(8.dp)
+                        )
+                        .border(1.dp, Color(0xFF1976D2), RoundedCornerShape(8.dp))
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        // Up arrow
+                        IconButton(
+                            onClick = { if (!readOnly) { val nv = (value + 1) % 10; onChange(nv); recomputeExit() } },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowUp,
+                                contentDescription = "Increase",
+                                tint = if (readOnly) Color.Gray else Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        
+                        // Current number display
+                        Box(
+                            modifier = Modifier
+                                .width(32.dp)
+                                .height(32.dp)
+                                .background(Color.White, RoundedCornerShape(4.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "${value}",
+                                color = Color(0xFF2196F3),
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        
+                        // Down arrow
+                        IconButton(
+                            onClick = { if (!readOnly) { val nv = if (value == 0) 9 else value - 1; onChange(nv); recomputeExit() } },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Decrease",
+                                tint = if (readOnly) Color.Gray else Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+            NumberWheel(exitH) { exitH = it }
+            NumberWheel(exitT) { exitT = it }
+            NumberWheel(exitO) { exitO = it }
+        }
         }
     }
 
-    Spacer(Modifier.height(12.dp))
-    // 工作模式
-    SectionCard(title = tr(lang, "工作模式", "Work Mode")) {
-        val workModes = if (lang == "en") listOf("Normally Open", "Normally Closed", "Delay Off") else listOf("常开模式", "常闭模式", "延时关闭")
-        val installModes = if (lang == "en") listOf("Ceiling Mount", "Wall Mount") else listOf("顶装", "壁装")
-
-        var workExpanded by remember { mutableStateOf(false) }
-        var installExpanded by remember { mutableStateOf(false) }
-        val workLabel = workModes.getOrElse(workModeIdx) { workModes.first() }
-        val installLabel = installModes.getOrElse(installModeIdx) { installModes.first() }
-
-        Text(tr(lang, "工作模式", "Work Mode"), color = Color(0xFF9bb3d6), fontSize = 12.sp)
-        ExposedDropdownMenuBox(expanded = workExpanded, onExpandedChange = { if (!readOnly) workExpanded = it }) {
-            TextField(
-                readOnly = true,
-                value = workLabel,
-                onValueChange = {},
-                modifier = Modifier.menuAnchor().fillMaxWidth(),
-                enabled = !readOnly,
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color(0xFF0f2340),
-                    unfocusedContainerColor = Color(0xFF0f2340),
-                    disabledContainerColor = Color(0xFF0f2340)
-                )
-            )
-            ExposedDropdownMenu(expanded = workExpanded, onDismissRequest = { workExpanded = false }) {
-                workModes.forEachIndexed { idx, label ->
-                    DropdownMenuItem(text = { Text(label) }, onClick = { workModeIdx = idx; workExpanded = false })
-                }
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
-        Text(tr(lang, "安装模式", "Install Mode"), color = Color(0xFF9bb3d6), fontSize = 12.sp)
-        ExposedDropdownMenuBox(expanded = installExpanded, onExpandedChange = { if (!readOnly) installExpanded = it }) {
-            TextField(
-                readOnly = true,
-                value = installLabel,
-                onValueChange = {},
-                modifier = Modifier.menuAnchor().fillMaxWidth(),
-                enabled = !readOnly,
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color(0xFF0f2340),
-                    unfocusedContainerColor = Color(0xFF0f2340),
-                    disabledContainerColor = Color(0xFF0f2340)
-                )
-            )
-            ExposedDropdownMenu(expanded = installExpanded, onDismissRequest = { installExpanded = false }) {
-                installModes.forEachIndexed { idx, label ->
-                    DropdownMenuItem(text = { Text(label) }, onClick = { installModeIdx = idx; installExpanded = false })
-                }
-            }
-        }
-    }
+    // 低功耗版本：去掉工作模式和安装模式界面
 
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1961,24 +2232,32 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
                 if (!readOnly) {
                     // 保存到本地
                     saveAll()
-                    // 计算并发送 AT 指令：基于六项距离（米）转厘米
-                    val mr1 = kotlin.math.round(mRange1 * 100f).toInt()
-                    val mr2 = kotlin.math.round(mRange2 * 100f).toInt()
-                    val mr3 = kotlin.math.round(mRange3 * 100f).toInt()
+                    // 计算并发送 AT 指令：低功耗版本
                     val r1 = kotlin.math.round(range1 * 100f).toInt()
                     val r2 = kotlin.math.round(range2 * 100f).toInt()
                     val r3 = kotlin.math.round(range3 * 100f).toInt()
-                    val hold = 10 * delaySec
+                    // 低功耗版本参数映射
+                    val hold = (exitDelay * 10).toInt().coerceIn(10, 100000) // 离开延迟 -> HoldFrame (秒数*10)
+                    val enterTarget = enterDelay.coerceIn(1, 20)
+                    enterDelay = enterTarget
+                    val (trithValue, stimeValue) = if (enterTarget <= 10) {
+                        // 1-10秒：TRITH=目标秒数，STIME=100
+                        Pair(enterTarget, 100)
+                    } else {
+                        // 11-20秒：TRITH=目标秒数/2，STIME=200
+                        Pair(enterTarget / 2, 200)
+                    }
                     val cmds = listOf(
-                        "AT+MR1=${mr1}",
-                        "AT+MR2=${mr2}",
-                        "AT+MR3=${mr3}",
-                        "AT+R1=${r1}",
-                        "AT+R2=${r2}",
-                        "AT+R3=${r3}",
-                        "AT+TRITH=${sensitivity}",
-                        "AT+HOLD=${hold}"
+                        "AT+R1=${r1}",   // 近段感应距离
+                        "AT+R2=${r2}",   // 中段感应距离
+                        "AT+R3=${r3}",   // 远段感应距离
+                        "AT+ONTH=${holdOnTh}", // 触发灵敏度 -> HOLDONTH
+                        "AT+TRITH=${trithValue}", // 进入延迟 -> TRITH (根据秒数范围计算)
+                        "AT+STIME=${stimeValue}",  // 进入延迟系数：1–10秒用100，11–20秒用200
+                        "AT+HOLD=${hold}", // 离开延迟 -> HoldFrame
+                        "AT+FTIME=100"   // 将离开延迟系数设置为0.1秒
                     )
+                    lastAction = "save"
                     startHandshake(cmds)
                 }
             }, enabled = !readOnly, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary)) { Text(tr(lang, "保存配置", "Save")) }
@@ -1987,24 +2266,32 @@ enum class HandshakeState { IDLE, WAITING_FOR_STOP, SENDING_COMMANDS }
                 if (!readOnly) {
                     // 保存到本地
                     saveAll()
-                    // 计算并发送 AT 指令：基于六项距离（米）转厘米
-                    val mr1 = kotlin.math.round(mRange1 * 100f).toInt()
-                    val mr2 = kotlin.math.round(mRange2 * 100f).toInt()
-                    val mr3 = kotlin.math.round(mRange3 * 100f).toInt()
+                    // 计算并发送 AT 指令：低功耗版本
                     val r1 = kotlin.math.round(range1 * 100f).toInt()
                     val r2 = kotlin.math.round(range2 * 100f).toInt()
                     val r3 = kotlin.math.round(range3 * 100f).toInt()
-                    val hold = 10 * delaySec
+                    // 低功耗版本参数映射
+                    val hold = (exitDelay * 10).toInt().coerceIn(10, 100000) // 离开延迟 -> HoldFrame (秒数*10)
+                    val enterTarget2 = enterDelay.coerceIn(1, 20)
+                    enterDelay = enterTarget2
+                    val (trithValue2, stimeValue2) = if (enterTarget2 <= 10) {
+                        // 1-10秒：TRITH=目标秒数，STIME=100
+                        Pair(enterTarget2, 100)
+                    } else {
+                        // 11-20秒：TRITH=目标秒数/2，STIME=200
+                        Pair(enterTarget2 / 2, 200)
+                    }
                     val cmds = listOf(
-                        "AT+MR1=${mr1}",
-                        "AT+MR2=${mr2}",
-                        "AT+MR3=${mr3}",
-                        "AT+R1=${r1}",
-                        "AT+R2=${r2}",
-                        "AT+R3=${r3}",
-                        "AT+TRITH=${sensitivity}",
-                        "AT+HOLD=${hold}"
+                        "AT+R1=${r1}",   // 近段感应距离
+                        "AT+R2=${r2}",   // 中段感应距离
+                        "AT+R3=${r3}",   // 远段感应距离
+                        "AT+ONTH=${holdOnTh}", // 触发灵敏度 -> HOLDONTH
+                        "AT+TRITH=${trithValue2}", // 进入延迟 -> TRITH (根据秒数范围计算)
+                        "AT+STIME=${stimeValue2}",  // 进入延迟系数：1–10秒用100，11–20秒用200
+                        "AT+HOLD=${hold}", // 离开延迟 -> HoldFrame
+                        "AT+FTIME=100"   // 将离开延迟系数设置为0.1秒
                     )
+                    lastAction = "save"
                     startHandshake(cmds)
                 }
             }, enabled = !readOnly, modifier = Modifier.weight(1f)) { Text(tr(lang, "保存配置", "Save")) }

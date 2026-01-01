@@ -342,5 +342,6 @@ RadarSwitch is a configuration and diagnostics tool for the CNDingtek DC59X rada
 - 应用 ID 与命名空间：`radarlinkpro.dingtek.com` → `radarswitchpro.dingtek.com`。
 - 应用显示名称（Manifest）：更新为 `RadarSwitch Pro`。
 - 日志标识：统一使用 `RadarSwitchPro`。
+- 权限修复：针对 MagicOS 7.1 扫描未弹出“精确位置”导致无结果的问题，运行时同时请求 `BLUETOOTH_SCAN`、`BLUETOOTH_CONNECT`、`ACCESS_FINE_LOCATION`、`ACCESS_COARSE_LOCATION`；若仅授权“附近设备”，应用会补弹“精确位置”请求。
 - 签名别名：`radarlinkpro` → `radarswitchpro`（需确保 keystore 中存在该别名）。
 - 仓库链接：README/CHANGELOG 中的发布链接更新为 `cndingtek/radarswitch-pro`。

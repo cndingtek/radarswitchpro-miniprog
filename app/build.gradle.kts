@@ -15,18 +15,12 @@ android {
         versionName = "1.1.1"
     }
 
-    // 从gradle.properties读取release签名属性
-    val releaseStoreFilePath = providers.gradleProperty("RELEASE_STORE_FILE").getOrElse("app/keystore/release.keystore")
-    val releaseStorePassword = providers.gradleProperty("RELEASE_STORE_PASSWORD").getOrElse("")
-    val releaseKeyAlias = providers.gradleProperty("RELEASE_KEY_ALIAS").getOrElse("")
-    val releaseKeyPassword = providers.gradleProperty("RELEASE_KEY_PASSWORD").getOrElse("")
-
     signingConfigs {
         create("release") {
-            storeFile = file(releaseStoreFilePath)
-            storePassword = releaseStorePassword
-            keyAlias = releaseKeyAlias
-            keyPassword = releaseKeyPassword
+            storeFile = file("release.keystore")
+            storePassword = "radarlink123"
+            keyAlias = "radarlink"
+            keyPassword = "radarlink123"
         }
     }
 

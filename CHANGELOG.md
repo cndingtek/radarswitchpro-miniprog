@@ -9,6 +9,8 @@
 - 应用显示名称更新为 `RadarSwitch Pro`，统一日志 TAG 为 `RadarSwitchPro`。
 - 签名别名更新为 `radarswitchpro`（需保证 keystore 中已创建该别名）。
 - README/CHANGELOG 的仓库发布链接更新为 `cndingtek/radarswitch-pro`。
+ - 修复：MagicOS 7.1 未自动请求“精确位置”权限导致扫描无结果；运行时权限新增 `ACCESS_FINE_LOCATION`/`ACCESS_COARSE_LOCATION` 并在仅授权“附近设备”后补弹“精确位置”。
+ - Manifest：新增 `ACCESS_COARSE_LOCATION`；为 `BLUETOOTH_SCAN` 增加 `usesPermissionFlags="neverForLocation"` 提示。
 
 构建与验证：
 - 已完成 `assembleRelease` 与 `bundleRelease` 构建；产物位于 `app/build3/outputs/apk/bundle/...`。
