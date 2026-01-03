@@ -38,12 +38,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     
     private enum OperationType { case none, read, save, restore }
     private var currentOperation: OperationType = .none
+    private var bypassHandshake: Bool = false
     
     // Raw RX state (only set when actually received from device)
     private var rxFastTime: Int?
     private var rxSlowTime: Int?
     private var rxTrith: Int?
     private var rxHoldFrame: Int?
+    private var retryCounts: [String: Int] = [:]
     
     // BLE UUIDs
     // Many SPP modules use FFF0 service.
@@ -165,14 +167,20 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     
     func readParameters() {
         currentOperation = .read
-        // Always reset handshake state for new operation
+        bypassHandshake = false
+        isInHandshake = false
         handshakeCompleted = false
         pendingCommands.removeAll()
         
-        // Queue reset command
-        queueCommand("AT+RESET\r\n")
+        queueCommand("AT+R1?\r\n")
+        queueCommand("AT+R2?\r\n")
+        queueCommand("AT+R3?\r\n")
+        queueCommand("AT+ONTH?\r\n")
+        queueCommand("AT+TRITH?\r\n")
+        queueCommand("AT+HOLD?\r\n")
+        queueCommand("AT+STIME=100\r\n")
+        queueCommand("AT+FTIME=100\r\n")
         
-        // Start handshake
         startHandshake()
     }
     
@@ -240,7 +248,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         guard !isSending else { return }
         
         // If running or handshake not complete, initiate handshake
-        if isRunningMode || !handshakeCompleted {
+        if (isRunningMode || !handshakeCompleted) && !bypassHandshake {
             if !isInHandshake {
                 startHandshake()
             }
@@ -254,10 +262,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
                     switch self.currentOperation {
                     case .save: self.lastToast = "Saved Successfully"
                     case .restore: self.lastToast = "Restored Successfully"
-                    case .read: break 
+                    case .read: self.lastToast = "Switched to Read-only Mode"
                     default: break
                     }
                     self.currentOperation = .none
+                    self.bypassHandshake = false
                 }
             }
             return
@@ -281,21 +290,31 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         
         isSending = true
         peripheral.writeValue(data, for: characteristic, type: type)
-        let txType = type == .withResponse ? "WithResp" : "NoResp"
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         lastSentCommand = trimmed
-        print("TX (\(txType)): \(trimmed)")
+        print("TX: \(trimmed)")
         lastSentWasAA = command.hasPrefix("AA")
         commandTimeoutWork?.cancel()
         
-        // Custom timeout for RESET
-        let isReset = command.uppercased().contains("AT+RESET")
-        let timeout: Double = isReset ? 3.0 : 0.5 
+        // Custom timeout: RESET longer; queries a bit longer than normal
+        let upper = command.uppercased()
+        let isReset = upper.contains("AT+RESET")
+        let isQuery = upper.contains("?")
+        let timeout: Double = isReset ? 3.0 : (isQuery ? 0.2 : 0.5)
 
         let work = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             self.isSending = false
-            print("TIMEOUT: \(self.lastSentCommand) no OK/ERR, proceed next")
+            if self.lastSentCommand.contains("?") {
+                let key = self.lastSentCommand
+                let c = self.retryCounts[key] ?? 0
+                if c < 3 {
+                    self.retryCounts[key] = c + 1
+                    self.pendingCommands.insert(key + "\r\n", at: 0)
+                    self.processQueue()
+                    return
+                }
+            }
             self.processQueue()
         }
         commandTimeoutWork = work
@@ -304,6 +323,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
 
     func restoreDefaults() {
         currentOperation = .restore
+        bypassHandshake = true
         sendCommand("AT+INIT") // sendCommand adds \r\n automatically now
     }
     
@@ -493,6 +513,31 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             isSending = false
             commandTimeoutWork?.cancel()
             commandTimeoutWork = nil
+            // Special handling for acknowledged set commands
+            if lastSentCommand.hasPrefix("AT+STIME=") {
+                if let valStr = lastSentCommand.split(separator: "=").last, let v = Int(valStr) {
+                    var p = deviceParams; p.slowTime = v
+                    DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+                }
+            } else if lastSentCommand.hasPrefix("AT+FTIME=") {
+                if let valStr = lastSentCommand.split(separator: "=").last, let v = Int(valStr) {
+                    var p = deviceParams; p.fastTime = v
+                    DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+                }
+            } else if currentOperation == .restore && lastSentCommand == "AT+INIT" {
+                // After INIT OK, push default settings
+                pendingCommands.append("AT+R1=200\r\n")
+                pendingCommands.append("AT+R2=500\r\n")
+                pendingCommands.append("AT+R3=1000\r\n")
+                pendingCommands.append("AT+ONTH=4\r\n")
+                pendingCommands.append("AT+STIME=500\r\n")
+                pendingCommands.append("AT+FTIME=500\r\n")
+                // TRITH for 20s with STIME=500 => 4
+                pendingCommands.append("AT+TRITH=4\r\n")
+                // HOLD for 20s with FTIME=500 => 40
+                pendingCommands.append("AT+HOLD=40\r\n")
+                processQueue()
+            }
             processQueue()
             return
         }
@@ -531,6 +576,57 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
 
         // RX log of raw line
         print("RX: \(response)")
+
+        // 2.2 Query responses AT+XXXX=YYYY
+        if let m = try? NSRegularExpression(pattern: "(?i)^AT\\+R([123])\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
+            let idxStr = (response as NSString).substring(with: m.range(at: 1))
+            let valStr = (response as NSString).substring(with: m.range(at: 2))
+            let cm = Double(valStr) ?? 0
+            let meters = cm / 100.0
+            var p = deviceParams
+            if idxStr == "1" { p.range1 = meters }
+            if idxStr == "2" { p.range2 = meters }
+            if idxStr == "3" { p.range3 = meters }
+            DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+            retryCounts["AT+R" + idxStr + "?"] = nil
+            // Treat query response as ack: cancel timeout and continue
+            isSending = false
+            commandTimeoutWork?.cancel(); commandTimeoutWork = nil
+            processQueue()
+            return
+        } else if let m2 = try? NSRegularExpression(pattern: "(?i)^AT\\+ONTH\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
+            let valStr = (response as NSString).substring(with: m2.range(at: 1))
+            let v = Int(valStr) ?? 0
+            var p = deviceParams; p.sensitivity = v
+            DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+            retryCounts["AT+ONTH?"] = nil
+            isSending = false
+            commandTimeoutWork?.cancel(); commandTimeoutWork = nil
+            processQueue()
+            return
+        } else if let m3 = try? NSRegularExpression(pattern: "(?i)^AT\\+TRITH\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
+            let valStr = (response as NSString).substring(with: m3.range(at: 1))
+            let v = Int(valStr) ?? 0
+            var p = deviceParams; p.trith = v; p.enterDelay = v
+            DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+            retryCounts["AT+TRITH?"] = nil
+            isSending = false
+            commandTimeoutWork?.cancel(); commandTimeoutWork = nil
+            processQueue()
+            return
+        } else if let m4 = try? NSRegularExpression(pattern: "(?i)^AT\\+HOLD\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
+            let valStr = (response as NSString).substring(with: m4.range(at: 1))
+            let v = Int(valStr) ?? 0
+            // As per requirement for read: seconds = HOLD/10
+            let seconds = v / 10
+            var p = deviceParams; p.holdFrame = v; p.exitDelay = seconds
+            DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+            retryCounts["AT+HOLD?"] = nil
+            isSending = false
+            commandTimeoutWork?.cancel(); commandTimeoutWork = nil
+            processQueue()
+            return
+        }
 
         // Capture window from GPIO ... MR1TH= by concatenating lines
         if response.range(of: "(?i)gpio", options: .regularExpression) != nil && !paramCaptureActive {
@@ -619,9 +715,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
                     case 3: newParams.range3 = val
                     default: break
                     }
-                    print("PARSE: inline commit R\(currentPending) = \(val)m before R\(keyStr)")
+                    
                     DispatchQueue.main.async { [weak self] in
-                        print("PUBLISH: inline commit R\(currentPending) -> \(val)m")
                         self?.deviceParams = newParams
                     }
                 } else {
@@ -642,15 +737,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
                     }
                     pendingRangeKey = nil
                     rangeSegmentBuffer = ""
-                    print("PARSE: inline set R\(keyStr) = \(val2)m")
+                    
                     DispatchQueue.main.async { [weak self] in
-                        print("PUBLISH: inline set R\(keyStr) -> \(val2)m")
                         self?.deviceParams = newParams
                     }
                 } else {
                     pendingRangeKey = Int(keyStr)
                     rangeSegmentBuffer = ""
-                    print("PARSE: pending Range key set -> R\(keyStr)")
+                    
                 }
                 return
             }
@@ -671,7 +765,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             }
             pendingRangeKey = nil
             rangeSegmentBuffer = ""
-            print("PARSE: direct inline set R\(kStr) = \(val)m")
+            
             DispatchQueue.main.async { [weak self] in
                 self?.deviceParams = newParams
             }
@@ -688,7 +782,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             }
             pendingRangeKey = Int(keyStr)
             rangeSegmentBuffer = ""
-            print("PARSE: pending Range key set -> R\(keyStr)")
+            
             return
         }
         if let key = pendingRangeKey {
@@ -708,9 +802,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
                 pendingRangeKey = nil
                 pendingRangeValue = nil
                 rangeSegmentBuffer = ""
-                print("PARSE: immediate Range set -> R\(key) = \(val)m")
+                
                 DispatchQueue.main.async { [weak self] in
-                    print("PUBLISH: immediate set R\(key) -> \(val)m")
                     self?.deviceParams = newParams
                 }
                 return
@@ -790,11 +883,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
                 let vStr = (buf as NSString).substring(with: vRange)
                 let extracted = Double(vStr) ?? 0
                 val = extracted
-                print("PARSE: extracted from segment buffer for R\(key) -> \(extracted)m")
+                
             }
         }
         guard let finalVal = val else {
-            print("PARSE: pending R\(key) invalid (no value); discarded by \(reason)")
+            
             return
         }
         var newParams = deviceParams
@@ -804,10 +897,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         case 3: newParams.range3 = finalVal
         default: break
         }
-        print("PARSE: committed R\(key) = \(finalVal)m by \(reason)")
+        
         DispatchQueue.main.async { [weak self] in
-            print("PUBLISH: commit R\(key) -> \(finalVal)m")
-            self?.deviceParams = newParams
+        self?.deviceParams = newParams
         }
     }
     
@@ -867,7 +959,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             if newParams.sensitivity != sens {
                 newParams.sensitivity = sens
                 changed = true
-                print("PARSE: HOLDONTH/ONTH=\(sens) -> Sensitivity=\(sens)")
+                
             }
         }
         
@@ -876,7 +968,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             let exitVal = (hf * ft) / 1000
             let changedExit = newParams.exitDelay != exitVal
             if changedExit {
-                print("PARSE: HoldFrame=\(hf), FastTime=\(ft) -> ExitDelay=\(exitVal)s")
+                
                 newParams.exitDelay = exitVal
                 changed = true
             }
@@ -885,7 +977,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             let enterVal = (t * st) / 100
             let changedEnter = newParams.enterDelay != enterVal
             if changedEnter {
-                print("PARSE: TRITH=\(t), SlowTime=\(st) -> EnterDelay=\(enterVal)s")
+                
                 newParams.enterDelay = enterVal
                 changed = true
             }
@@ -898,7 +990,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         
         if changed {
             DispatchQueue.main.async { [weak self] in
-                print("PUBLISH: params SENS=\(newParams.sensitivity) Enter=\(newParams.enterDelay)s Exit=\(newParams.exitDelay)s R1=\(newParams.range1)m R2=\(newParams.range2)m R3=\(newParams.range3)m")
                 self?.deviceParams = newParams
             }
         }

@@ -264,7 +264,6 @@ struct DeviceDetailParamsView: View {
             }
         }
         .onReceive(viewModel.bleManager.$deviceParams) { newParams in
-            print("UI: deviceParams updated SENS=\(newParams.sensitivity) Enter=\(newParams.enterDelay)s Exit=\(newParams.exitDelay)s R1=\(newParams.range1)m R2=\(newParams.range2)m R3=\(newParams.range3)m")
             localParams = newParams
         }
         .onReceive(viewModel.bleManager.$lastToast) { msg in
