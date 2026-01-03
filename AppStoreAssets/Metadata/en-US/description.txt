@@ -1,0 +1,11 @@
+RadarSwitch is a powerful Bluetooth Low Energy (BLE) debugging assistant designed for developers and hardware enthusiasts.
+
+Key Features:
+- **Scanner**: Quickly discover nearby BLE devices with real-time RSSI signal strength monitoring.
+- **Connection**: Stable connection to peripheral devices for detailed inspection.
+- **Service Explorer**: Browse GATT services and characteristics intuitively.
+- **Data Interaction**: Read and write characteristic values easily (Hex/Text formats).
+- **Log Console**: Real-time log monitoring for debugging connection events and data transfer.
+- **Device Management**: Save favorite devices for quick access.
+
+Whether you are developing IoT devices or debugging smart hardware, RadarSwitch makes the process simple and efficient.

@@ -23,6 +23,7 @@ local.properties
 # IDE
 *.iml
 .idea/
+.trae/
 
 # Native build
 .externalNativeBuild/
@@ -47,3 +48,12 @@ window_dump.xml
 # OS files
 .DS_Store
 Thumbs.db
+
+# iOS / Xcode
+*.derivedData
+*.xcuserstate
+xcuserdata/
+DerivedData/
+*.ipa
+*.dSYM.zip
+*.dSYM

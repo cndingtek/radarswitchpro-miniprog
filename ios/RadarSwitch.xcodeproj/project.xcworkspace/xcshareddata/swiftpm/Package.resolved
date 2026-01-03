@@ -1,0 +1,14 @@
+{
+  "pins" : [
+    {
+      "identity" : "swiftui-charts",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-charts",
+      "state" : {
+        "revision" : "b1fb0ce12b0d35e8a4b37015419b3c8f7c7d8e8e",
+        "version" : "1.0.2"
+      }
+    }
+  ],
+  "version" : 2
+}

@@ -1,0 +1,51 @@
+/* General */
+"Settings" = "Settings";
+"App Settings" = "App Settings";
+"Language" = "Language";
+"Help & Tutorial" = "Help & Tutorial";
+"We recommend reading the tutorial first." = "We recommend reading the tutorial first.";
+"View Tutorial Again" = "View Tutorial Again";
+"Firmware Update" = "Firmware Update";
+"Current device firmware: read to display" = "Current device firmware: read to display";
+"Check Update" = "Check Update";
+"Install from file" = "Install from file";
+"Note: Update feature is not integrated yet." = "Note: Update feature is not integrated yet.";
+"About" = "About";
+
+/* Logs & Monitoring */
+"Logs & Monitor" = "Logs & Monitor";
+"Target Distance (cm)" = "Target Distance (cm)";
+
+/* Params */
+"Read-only Mode" = "Read-only Mode";
+"Locked" = "Locked";
+"Editable" = "Editable";
+"Unlocked • Editable now" = "Unlocked • Editable now";
+"Locked • View only, cannot edit" = "Locked • View only, cannot edit";
+"Sensing Distance" = "Sensing Distance";
+"Far Distance" = "Far Distance";
+"Mid Distance" = "Mid Distance";
+"Near Distance" = "Near Distance";
+"Delay" = "Delay";
+"Trigger Sensitivity" = "Trigger Sensitivity";
+"Entry Delay" = "Entry Delay";
+"Exit Delay" = "Exit Delay";
+"Save" = "Save";
+"Restore" = "Restore";
+
+/* Other Views (English base) */
+"My Devices" = "My Devices";
+"No paired devices" = "No paired devices";
+"1/1" = "1/1";
+"No Device Selected" = "No Device Selected";
+"Please select a device from the list." = "Please select a device from the list.";
+"Bluetooth Scan" = "Bluetooth Scan";
+"Search nearby radar switch devices" = "Search nearby radar switch devices";
+"Connected" = "Connected";
+"Connect" = "Connect";
+
+/* Keys originally written in Chinese, English translations */
+"当前值:" = "Current:";
+"设置说明" = "Setup Guide";
+"进入延迟: 检测到目标后的响应时间" = "Entry delay: response time after detecting target";
+"退出延迟: 目标离开后的保持时间" = "Exit delay: hold time after target leaves";
