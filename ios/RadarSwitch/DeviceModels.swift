@@ -47,16 +47,16 @@ struct DeviceParameters: Codable, Equatable {
     var slowTime: Int
     
     init() {
-        self.range1 = 1.5
-        self.range2 = 2.5
-        self.range3 = 3.5
-        self.sensitivity = 7
-        self.enterDelay = 1
-        self.exitDelay = 1
-        self.holdFrame = 50
-        self.trith = 100
-        self.fastTime = 500
-        self.slowTime = 5000
+        self.range1 = 0
+        self.range2 = 0
+        self.range3 = 0
+        self.sensitivity = 0
+        self.enterDelay = 0
+        self.exitDelay = 0
+        self.holdFrame = 0
+        self.trith = 0
+        self.fastTime = 0
+        self.slowTime = 0
     }
 }
 

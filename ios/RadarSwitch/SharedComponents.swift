@@ -39,8 +39,8 @@ struct TopNavigationBar: View {
             // App Icon Placeholder
             ZStack {
                 Circle()
-                    .fill(AppColors.primaryBlue)
-                    .frame(width: 48, height: 48)
+                .fill(AppColors.primaryBlue)
+                .frame(width: 48, height: 48)
                 
                 Image(systemName: "waveform.path.ecg")
                     .resizable()
@@ -241,5 +241,49 @@ struct ToggleCapsule: View {
         .padding(2)
         .background(AppColors.deepBlue)
         .cornerRadius(18)
+    }
+}
+
+// MARK: - Toast Component
+struct ToastView: View {
+    let message: String
+    
+    var body: some View {
+        Text(message)
+            .font(AppFonts.body())
+            .foregroundColor(.white)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.8))
+            .cornerRadius(25)
+            .shadow(radius: 5)
+    }
+}
+
+struct ToastModifier: ViewModifier {
+    @Binding var isShowing: Bool
+    let message: String
+    
+    func body(content: Content) -> some View {
+        ZStack {
+            content
+            
+            if isShowing {
+                VStack {
+                    Spacer()
+                    ToastView(message: message)
+                        .padding(.bottom, 50)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .zIndex(1)
+            }
+        }
+        .animation(.spring(), value: isShowing)
+    }
+}
+
+extension View {
+    func toast(isShowing: Binding<Bool>, message: String) -> some View {
+        self.modifier(ToastModifier(isShowing: isShowing, message: message))
     }
 }

@@ -12,6 +12,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     @Published var logs: [String] = []
     @Published var distanceHistory: [Int] = [] // Store distance values
     @Published var distanceSeries: [DistanceSample] = []
+    @Published var lastToast: String?
     
     private var centralManager: CBCentralManager!
     private var connectedPeripheral: CBPeripheral?
@@ -34,6 +35,15 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     private var paramCaptureBuffer: String = ""
     private var commandTimeoutWork: DispatchWorkItem?
     private var lastSentCommand: String = ""
+    
+    private enum OperationType { case none, read, save, restore }
+    private var currentOperation: OperationType = .none
+    
+    // Raw RX state (only set when actually received from device)
+    private var rxFastTime: Int?
+    private var rxSlowTime: Int?
+    private var rxTrith: Int?
+    private var rxHoldFrame: Int?
     
     // BLE UUIDs
     // Many SPP modules use FFF0 service.
@@ -154,6 +164,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     }
     
     func readParameters() {
+        currentOperation = .read
         // Always reset handshake state for new operation
         handshakeCompleted = false
         pendingCommands.removeAll()
@@ -166,16 +177,38 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     }
     
     func saveParameters(_ params: DeviceParameters) {
+        currentOperation = .save
         // Always reset handshake state for new operation
         handshakeCompleted = false
         pendingCommands.removeAll()
         
         // Logic from Android: Calculate internal values based on UI params
-        // trith = enter_delay (if <= 10) else enter_delay/2
-        // stime = 100 (if <= 10) else 200
-        let trith = params.enterDelay <= 10 ? params.enterDelay : params.enterDelay / 2
-        let stime = params.enterDelay <= 10 ? 100 : 200
-        let hold = params.exitDelay // Simplified mapping
+        
+        // Enter Delay calculation:
+        // UI value is seconds.
+        // Rule: EnterDelay = TRITH * STIME / 100
+        // Constraint: TRITH <= 10
+        let trith: Int
+        let stime: Int
+        
+        if params.enterDelay <= 10 {
+            trith = params.enterDelay
+            stime = 100
+        } else {
+            // For > 10s, fix TRITH at 10 (or smaller) and scale STIME
+            // EnterDelay = 10 * STIME / 100 = STIME / 10
+            // => STIME = EnterDelay * 10
+            trith = 10
+            stime = params.enterDelay * 10
+        }
+        
+        // HOLD time calculation:
+        // UI value is seconds.
+        // FTIME is fixed at 100ms (0.1s).
+        // Command AT+HOLD=value expects value in units of FTIME.
+        // So, AT+HOLD = UI_Seconds * 10
+        // Example: UI=20s -> HOLD=200 (200 * 0.1s = 20s)
+        let hold = params.exitDelay * 10
         
         // Queue distance commands in centimeters (e.g., 2.0m -> 200)
         queueCommand("AT+R1=\(Int(params.range1 * 100))\r\n")
@@ -214,7 +247,21 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             return
         }
         
-        guard !pendingCommands.isEmpty else { return }
+        guard !pendingCommands.isEmpty else {
+            // Queue empty, operation complete
+            if currentOperation != .none {
+                DispatchQueue.main.async {
+                    switch self.currentOperation {
+                    case .save: self.lastToast = "Saved Successfully"
+                    case .restore: self.lastToast = "Restored Successfully"
+                    case .read: break 
+                    default: break
+                    }
+                    self.currentOperation = .none
+                }
+            }
+            return
+        }
         let cmd = pendingCommands.removeFirst()
         sendRaw(cmd)
         isSending = true
@@ -240,6 +287,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         print("TX (\(txType)): \(trimmed)")
         lastSentWasAA = command.hasPrefix("AA")
         commandTimeoutWork?.cancel()
+        
+        // Custom timeout for RESET
+        let isReset = command.uppercased().contains("AT+RESET")
+        let timeout: Double = isReset ? 3.0 : 0.5 
+
         let work = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             self.isSending = false
@@ -247,10 +299,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             self.processQueue()
         }
         commandTimeoutWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
     }
 
     func restoreDefaults() {
+        currentOperation = .restore
         sendCommand("AT+INIT") // sendCommand adds \r\n automatically now
     }
     
@@ -431,6 +484,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         }
         if response.contains("RUN") {
             isRunningMode = true
+            if currentOperation == .read { finalizeReading() }
             return
         }
         
@@ -442,6 +496,17 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             processQueue()
             return
         }
+        
+        // 2.1 Handle AT+RESET special case (responds with GPIO dump, not OK)
+        if lastSentCommand == "AT+RESET" && response.range(of: "(?i)gpio", options: .regularExpression) != nil {
+             print("INFO: AT+RESET acknowledged via GPIO response")
+             isSending = false
+             commandTimeoutWork?.cancel()
+             commandTimeoutWork = nil
+             processQueue()
+             // Fall through to allow GPIO parsing
+        }
+
         if response.contains("AT+ERR") {
             // If we just tried AA while device already in STOP, treat as handshake OK and continue
             if lastSentWasAA {
@@ -472,6 +537,25 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             paramCaptureActive = true
             paramCaptureBuffer = ""
             print("CAPTURE: start GPIO")
+            // Reset RX raw state and clear displayed params to baseline zeros for fresh parse
+            rxFastTime = nil
+            rxSlowTime = nil
+            rxTrith = nil
+            rxHoldFrame = nil
+            var zero = deviceParams
+            zero.sensitivity = 0
+            zero.enterDelay = 0
+            zero.exitDelay = 0
+            zero.range1 = 0
+            zero.range2 = 0
+            zero.range3 = 0
+            zero.holdFrame = 0
+            zero.trith = 0
+            zero.fastTime = 0
+            zero.slowTime = 0
+            DispatchQueue.main.async { [weak self] in
+                self?.deviceParams = zero
+            }
         }
         if paramCaptureActive {
             let part = response.components(separatedBy: CharacterSet.whitespacesAndNewlines).joined()
@@ -506,6 +590,11 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
                 }
                 paramCaptureActive = false
                 paramCaptureBuffer = ""
+                if currentOperation == .read {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.lastToast = "Switched to Read-only Mode"
+                    }
+                }
             }
         }
         // 2.5 Range handling, including inline concatenations
@@ -663,6 +752,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             let human = monitorHumanText(code: code, dist: dist)
             appendLog("[\(formatTime())] \(human)")
             appendDistance(dist)
+            if currentOperation == .read { finalizeReading() }
         }
         
         // 4. Parameters (Parsing complex string)
@@ -721,6 +811,16 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         }
     }
     
+    private func finalizeReading() {
+        currentOperation = .none
+        rxFastTime = nil
+        rxSlowTime = nil
+        rxTrith = nil
+        rxHoldFrame = nil
+        paramCaptureActive = false
+        paramCaptureBuffer = ""
+    }
+    
     private func appendLog(_ message: String) {
         DispatchQueue.main.async { [weak self] in
             self?.logs.append(message)
@@ -746,27 +846,59 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         var changed = false
         let text = response
         
-        if let hold = extractInt(from: text, pattern: "(?i)holdframe\\s*=\\s*(\\d+)") { newParams.exitDelay = hold; changed = true }
-        
-        var slowTime = extractInt(from: text, pattern: "(?i)slowtime=(\\d+)")
-        if slowTime == nil { slowTime = extractInt(from: text, pattern: "(?i)stime=(\\d+)") }
-        if let trith = extractInt(from: text, pattern: "(?i)trith=(\\d+)") {
-            if let stime = slowTime {
-                let val = stime == 100 ? trith : trith * 2
-                if newParams.enterDelay != val { newParams.enterDelay = val; changed = true }
+        // 1) Parse raw fields only from actual RX content (do NOT use defaults)
+        if let ft = extractInt(from: text, pattern: "(?i)(?:fasttime|ftime)\\s*=\\s*(\\d+)") {
+            rxFastTime = ft
+            newParams.fastTime = ft
+        }
+        if let st = extractInt(from: text, pattern: "(?i)slowtime=(\\d+)") ?? extractInt(from: text, pattern: "(?i)stime=(\\d+)") {
+            rxSlowTime = st
+            newParams.slowTime = st
+        }
+        if let t = extractInt(from: text, pattern: "(?i)trith=(\\d+)") {
+            rxTrith = t
+            newParams.trith = t
+        }
+        if let h = extractInt(from: text, pattern: "(?i)holdframe\\s*=\\s*(\\d+)") {
+            rxHoldFrame = h
+            newParams.holdFrame = h
+        }
+        if let sens = extractInt(from: text, pattern: "(?i)(?:holdonth|onth)\\s*=\\s*(\\d+)") {
+            if newParams.sensitivity != sens {
+                newParams.sensitivity = sens
+                changed = true
+                print("PARSE: HOLDONTH/ONTH=\(sens) -> Sensitivity=\(sens)")
             }
         }
-        if let sens = extractInt(from: text, pattern: "(?i)holdonth=(\\d+)") { if newParams.sensitivity != sens { newParams.sensitivity = sens; changed = true } }
         
-        // Direct RangeX=2.0m format
+        // 2) Recalculate derived values ONLY when dependent raw values are known from RX
+        if let hf = rxHoldFrame, let ft = rxFastTime {
+            let exitVal = (hf * ft) / 1000
+            let changedExit = newParams.exitDelay != exitVal
+            if changedExit {
+                print("PARSE: HoldFrame=\(hf), FastTime=\(ft) -> ExitDelay=\(exitVal)s")
+                newParams.exitDelay = exitVal
+                changed = true
+            }
+        }
+        if let t = rxTrith, let st = rxSlowTime {
+            let enterVal = (t * st) / 100
+            let changedEnter = newParams.enterDelay != enterVal
+            if changedEnter {
+                print("PARSE: TRITH=\(t), SlowTime=\(st) -> EnterDelay=\(enterVal)s")
+                newParams.enterDelay = enterVal
+                changed = true
+            }
+        }
+        
+        // 3) Direct RangeX=2.0m format
         if let r1m = extractDouble(from: text, pattern: "(?i)range1=\\s*(\\d+\\.?\\d*)m") { if newParams.range1 != r1m { newParams.range1 = r1m; changed = true } }
         if let r2m = extractDouble(from: text, pattern: "(?i)range2=\\s*(\\d+\\.?\\d*)m") { if newParams.range2 != r2m { newParams.range2 = r2m; changed = true } }
         if let r3m = extractDouble(from: text, pattern: "(?i)range3=\\s*(\\d+\\.?\\d*)m") { if newParams.range3 != r3m { newParams.range3 = r3m; changed = true } }
-        // Numeric-only lines are handled in handleResponse per-line state machine
         
         if changed {
             DispatchQueue.main.async { [weak self] in
-                print("PUBLISH: parseParameters R1=\(newParams.range1)m R2=\(newParams.range2)m R3=\(newParams.range3)m")
+                print("PUBLISH: params SENS=\(newParams.sensitivity) Enter=\(newParams.enterDelay)s Exit=\(newParams.exitDelay)s R1=\(newParams.range1)m R2=\(newParams.range2)m R3=\(newParams.range3)m")
                 self?.deviceParams = newParams
             }
         }

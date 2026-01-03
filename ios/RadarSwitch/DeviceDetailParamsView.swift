@@ -6,6 +6,8 @@ struct DeviceDetailParamsView: View {
     // Local state for editing
     @State private var isEditable: Bool = false
     @State private var localParams: DeviceParameters
+    @State private var showToast = false
+    @State private var toastMessage = ""
     @AppStorage("appLanguage") private var appLanguage = "en"
     private func l(_ key: String) -> String {
         if appLanguage == "zh-Hans" {
@@ -21,11 +23,15 @@ struct DeviceDetailParamsView: View {
             case "Near Distance": return "近距"
             case "Delay": return "延时设置"
             case "Trigger Sensitivity": return "触发灵敏度"
-            case "Entry Delay": return "进入延时"
+            case "Entry Delay": return "进入延迟"
             case "Exit Delay": return "离开延时"
             case "Save": return "保存"
             case "Restore": return "恢复出厂"
             case "s": return "秒"
+            case "Switched to Read-only Mode": return "已切换至只读模式"
+            case "Switched to Editable Mode": return "已切换至编辑模式"
+            case "Saved Successfully": return "保存成功"
+            case "Restored Successfully": return "恢复成功"
             default: return key
             }
         }
@@ -67,6 +73,7 @@ struct DeviceDetailParamsView: View {
                                 isEditable = true 
                                 // Handshake is handled via connection usually, but ensuring it's ready
                                 viewModel.bleManager.startHandshake() 
+                                showToastMessage(l("Switched to Editable Mode"))
                             }) { 
                                 Text(l("Editable"))
                                     .font(AppFonts.caption())
@@ -183,7 +190,7 @@ struct DeviceDetailParamsView: View {
                     // Entry Delay (Int 1-20)
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("Entry Delay")
+                            Text(l("Entry Delay"))
                                 .font(AppFonts.body())
                                 .foregroundColor(AppColors.textSecondary)
                             Spacer()
@@ -257,12 +264,26 @@ struct DeviceDetailParamsView: View {
             }
         }
         .onReceive(viewModel.bleManager.$deviceParams) { newParams in
-            print("UI: deviceParams updated R1=\(newParams.range1)m R2=\(newParams.range2)m R3=\(newParams.range3)m")
+            print("UI: deviceParams updated SENS=\(newParams.sensitivity) Enter=\(newParams.enterDelay)s Exit=\(newParams.exitDelay)s R1=\(newParams.range1)m R2=\(newParams.range2)m R3=\(newParams.range3)m")
             localParams = newParams
+        }
+        .onReceive(viewModel.bleManager.$lastToast) { msg in
+            if let m = msg {
+                showToastMessage(l(m))
+            }
         }
         .onAppear {
             viewModel.bleManager.readParameters() // Auto read on appear
             localParams = viewModel.bleManager.deviceParams
+        }
+        .toast(isShowing: $showToast, message: toastMessage)
+    }
+    
+    private func showToastMessage(_ message: String) {
+        toastMessage = message
+        showToast = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            showToast = false
         }
     }
 }
