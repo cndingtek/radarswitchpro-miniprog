@@ -23,8 +23,7 @@ struct DeviceDetailParamsView: View {
             case "Near Distance": return "近距"
             case "Delay": return "延时设置"
             case "Trigger Sensitivity": return "触发灵敏度"
-            case "Entry Delay": return "进入延迟"
-            case "Exit Delay": return "离开延时"
+            case "Delay Time": return "延迟时间"
             case "Save": return "保存"
             case "Restore": return "恢复出厂"
             case "s": return "秒"
@@ -187,28 +186,9 @@ struct DeviceDetailParamsView: View {
                         .disabled(!isEditable)
                     }
                     
-                    // Entry Delay (Int 1-20)
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(l("Entry Delay"))
-                                .font(AppFonts.body())
-                                .foregroundColor(AppColors.textSecondary)
-                            Spacer()
-                            Text("\(localParams.enterDelay) " + l("s"))
-                                .font(AppFonts.body())
-                                .foregroundColor(isEditable ? AppColors.primaryBlue : AppColors.textGray)
-                        }
-                        Slider(value: Binding(
-                            get: { Double(localParams.enterDelay) },
-                            set: { localParams.enterDelay = Int($0) }
-                        ), in: 1...20, step: 1)
-                        .accentColor(isEditable ? AppColors.primaryBlue : AppColors.textGray)
-                        .disabled(!isEditable)
-                    }
-                    
-                    // Exit Delay (Stepper 1-999)
+                    // Delay Time (Stepper 1-999)
                     HStack {
-                        Text(l("Exit Delay"))
+                        Text(l("Delay Time"))
                             .font(AppFonts.body())
                             .foregroundColor(AppColors.textSecondary)
                         Spacer()

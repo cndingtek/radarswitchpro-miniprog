@@ -176,7 +176,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         queueCommand("AT+R2?\r\n")
         queueCommand("AT+R3?\r\n")
         queueCommand("AT+ONTH?\r\n")
-        queueCommand("AT+TRITH?\r\n")
         queueCommand("AT+HOLD?\r\n")
         queueCommand("AT+STIME=100\r\n")
         queueCommand("AT+FTIME=100\r\n")
@@ -189,26 +188,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         // Always reset handshake state for new operation
         handshakeCompleted = false
         pendingCommands.removeAll()
-        
-        // Logic from Android: Calculate internal values based on UI params
-        
-        // Enter Delay calculation:
-        // UI value is seconds.
-        // Rule: EnterDelay = TRITH * STIME / 100
-        // Constraint: TRITH <= 10
-        let trith: Int
-        let stime: Int
-        
-        if params.enterDelay <= 10 {
-            trith = params.enterDelay
-            stime = 100
-        } else {
-            // For > 10s, fix TRITH at 10 (or smaller) and scale STIME
-            // EnterDelay = 10 * STIME / 100 = STIME / 10
-            // => STIME = EnterDelay * 10
-            trith = 10
-            stime = params.enterDelay * 10
-        }
         
         // HOLD time calculation:
         // UI value is seconds.
@@ -223,8 +202,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         queueCommand("AT+R2=\(Int(params.range2 * 100))\r\n")
         queueCommand("AT+R3=\(Int(params.range3 * 100))\r\n")
         queueCommand("AT+ONTH=\(params.sensitivity)\r\n") // SENS maps to ONTH? Need to verify Android logic, assuming simple map
-        queueCommand("AT+TRITH=\(trith)\r\n")
-        queueCommand("AT+STIME=\(stime)\r\n")
+        // Do not send TRITH; fix SlowTime as requested
+        queueCommand("AT+STIME=10\r\n")
         queueCommand("AT+HOLD=\(hold)\r\n")
         queueCommand("AT+FTIME=100\r\n")
         
@@ -479,7 +458,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         let combined = lineBuffer + response
         let parts = combined.components(separatedBy: CharacterSet.newlines)
         let endsWithNewline = combined.hasSuffix("\n") || combined.hasSuffix("\r")
-        let processCount = endsWithNewline ? parts.count : max(parts.count - 1, 0)
+        let processCount = parts.count
         
         for i in 0..<processCount {
             let line = parts[i].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -526,16 +505,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
                 }
             } else if currentOperation == .restore && lastSentCommand == "AT+INIT" {
                 // After INIT OK, push default settings
-                pendingCommands.append("AT+R1=200\r\n")
-                pendingCommands.append("AT+R2=500\r\n")
-                pendingCommands.append("AT+R3=1000\r\n")
-                pendingCommands.append("AT+ONTH=4\r\n")
-                pendingCommands.append("AT+STIME=500\r\n")
-                pendingCommands.append("AT+FTIME=500\r\n")
-                // TRITH for 20s with STIME=500 => 4
-                pendingCommands.append("AT+TRITH=4\r\n")
-                // HOLD for 20s with FTIME=500 => 40
-                pendingCommands.append("AT+HOLD=40\r\n")
+                pendingCommands.append("AT+R1=200\r\n")   // 2m
+                pendingCommands.append("AT+R2=500\r\n")   // 5m
+                pendingCommands.append("AT+R3=1000\r\n")  // 10m
+                pendingCommands.append("AT+ONTH=4\r\n")   // sensitivity
+                // Align with latest scheme: no TRITH, fix STIME/FTIME and HOLD only
+                pendingCommands.append("AT+STIME=10\r\n")   // write SlowTime fixed 10
+                pendingCommands.append("AT+FTIME=100\r\n")  // FastTime fixed 100
+                pendingCommands.append("AT+HOLD=200\r\n")   // Delay Time default 20s -> HOLD=20*10
                 processQueue()
             }
             processQueue()
@@ -578,7 +555,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         print("RX: \(response)")
 
         // 2.2 Query responses AT+XXXX=YYYY
-        if let m = try? NSRegularExpression(pattern: "(?i)^AT\\+R([123])\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
+        if let m = try? NSRegularExpression(pattern: "(?i)\\bAT\\+R([123])\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
             let idxStr = (response as NSString).substring(with: m.range(at: 1))
             let valStr = (response as NSString).substring(with: m.range(at: 2))
             let cm = Double(valStr) ?? 0
@@ -594,7 +571,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             commandTimeoutWork?.cancel(); commandTimeoutWork = nil
             processQueue()
             return
-        } else if let m2 = try? NSRegularExpression(pattern: "(?i)^AT\\+ONTH\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
+        } else if let m2 = try? NSRegularExpression(pattern: "(?i)\\bAT\\+ONTH\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
             let valStr = (response as NSString).substring(with: m2.range(at: 1))
             let v = Int(valStr) ?? 0
             var p = deviceParams; p.sensitivity = v
@@ -604,7 +581,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             commandTimeoutWork?.cancel(); commandTimeoutWork = nil
             processQueue()
             return
-        } else if let m3 = try? NSRegularExpression(pattern: "(?i)^AT\\+TRITH\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
+        } else if let m3 = try? NSRegularExpression(pattern: "(?i)\\bAT\\+TRITH\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
             let valStr = (response as NSString).substring(with: m3.range(at: 1))
             let v = Int(valStr) ?? 0
             var p = deviceParams; p.trith = v; p.enterDelay = v
@@ -614,7 +591,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             commandTimeoutWork?.cancel(); commandTimeoutWork = nil
             processQueue()
             return
-        } else if let m4 = try? NSRegularExpression(pattern: "(?i)^AT\\+HOLD\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
+        } else if let m4 = try? NSRegularExpression(pattern: "(?i)\\bAT\\+HOLD\\s*=\\s*(\\d+)\\b", options: []).firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
             let valStr = (response as NSString).substring(with: m4.range(at: 1))
             let v = Int(valStr) ?? 0
             // As per requirement for read: seconds = HOLD/10
