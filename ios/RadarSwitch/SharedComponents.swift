@@ -166,6 +166,30 @@ struct CustomButton: View {
     }
 }
 
+// Compact capsule-styled action button (matches ToggleCapsule style)
+struct SmallActionCapsule: View {
+    var title: String
+    var isPrimary: Bool = false
+    var action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(AppFonts.caption())
+                .fontWeight(.semibold)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 16)
+                .background(isPrimary ? AppColors.primaryBlue : Color.clear)
+                .foregroundColor(isPrimary ? .white : AppColors.textSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(AppColors.primaryBlue, lineWidth: isPrimary ? 0 : 1)
+                )
+                .cornerRadius(16)
+        }
+    }
+}
+
 // MARK: - Status Badge
 struct StatusBadge: View {
     var isOnline: Bool

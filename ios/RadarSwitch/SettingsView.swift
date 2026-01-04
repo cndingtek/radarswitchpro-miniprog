@@ -7,6 +7,9 @@ struct SettingsView: View {
     @AppStorage("appLanguage") private var appLanguage = "en"
     @State private var languageIndexState: Int = 0
     @State private var showOnboarding: Bool = false
+    @Environment(\.openURL) private var openURL
+    private var appVersion: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—" }
+    private var versionLabel: String { appLanguage == "zh-Hans" ? "版本：\(appVersion)" : "Version: \(appVersion)" }
     
     private func localized(_ key: String) -> String {
         let zh: [String: String] = [
@@ -18,11 +21,11 @@ struct SettingsView: View {
             "Chart Time Window": "图表时间窗口",
             "Log Count Limit": "日志条数上限",
             "Help & Tutorial": "帮助与教程",
-            "We recommend reading the tutorial first.": "建议先阅读教程。",
-            "View Tutorial Again": "再次查看教程",
+            "App Guide": "软件使用教程",
+            "Radar Switch Installation": "硬件安装说明",
             "About": "关于",
             "Version: 1.1.1": "版本：1.1.1",
-            "Developer: Shenzhen Dingtek IoT Technology Corp.,Ltd.": "开发者：深圳鼎阳物联科技股份有限公司",
+            "Developer: Shenzhen Dingtek IoT Technology Corp.,Ltd.": "开发者：深圳鼎恒泰物联科技有限公司",
             "Website: www.dingtek.com": "网站：www.dingtek.com",
             "Email: service@dingtek.com": "邮箱：service@dingtek.com"
         ]
@@ -106,13 +109,22 @@ struct SettingsView: View {
                             .font(AppFonts.subheadline())
                             .foregroundColor(AppColors.textWhite)
                         
-                        Text(localized("We recommend reading the tutorial first."))
-                            .font(AppFonts.caption())
-                            .foregroundColor(AppColors.textSecondary)
-                        
-                        CustomButton(title: localized("View Tutorial Again"), isPrimary: true) {
-                            showOnboarding = true
+                        HStack(spacing: 8) {
+                            SmallActionCapsule(title: localized("App Guide"), isPrimary: true) {
+                                showOnboarding = true
+                            }
+                            SmallActionCapsule(title: appLanguage == "zh-Hans" ? localized("Radar Switch Installation") : "Radar Install", isPrimary: false) {
+                                let urlStr = appLanguage == "zh-Hans"
+                                    ? "https://dify.dingtek.com/fb/api/public/dl/VflW1WYe?inline=true"
+                                    : "https://dify.dingtek.com/fb/api/public/dl/LY_ZQhum?inline=true"
+                                if let url = URL(string: urlStr) {
+                                    openURL(url)
+                                }
+                            }
                         }
+                        .padding(2)
+                        .background(AppColors.deepBlue)
+                        .cornerRadius(18)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -130,7 +142,7 @@ struct SettingsView: View {
                         Group {
                             Text("RadarSwitch Pro")
                                 .fontWeight(.bold)
-                            Text(localized("Version: 1.1.1"))
+                            Text(versionLabel)
                             Text(localized("Developer: Shenzhen Dingtek IoT Technology Corp.,Ltd."))
                             Text(localized("Website: www.dingtek.com"))
                             Text(localized("Email: service@dingtek.com"))

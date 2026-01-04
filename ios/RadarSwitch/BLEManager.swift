@@ -39,6 +39,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     private enum OperationType { case none, read, save, restore }
     private var currentOperation: OperationType = .none
     private var bypassHandshake: Bool = false
+    private var dataProcessingEnabled: Bool = true
     
     // Raw RX state (only set when actually received from device)
     private var rxFastTime: Int?
@@ -63,6 +64,10 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     
     func requestBluetoothPermission() {
         // iOS handles permission automatically
+    }
+    
+    func setDataProcessingEnabled(_ enabled: Bool) {
+        dataProcessingEnabled = enabled
     }
     
     func scanForDevices() {
@@ -99,6 +104,13 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         discoveredPeripherals.removeAll()
         centralManager.scanForPeripherals(withServices: nil, options: nil)
         isScanning = true
+    }
+    
+    func stopScanning() {
+        #if !targetEnvironment(simulator)
+        centralManager.stopScan()
+        #endif
+        isScanning = false
     }
     
     func connectToDevice(_ device: Device) {
@@ -338,6 +350,12 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         // Try to get name from advertisement data
         let deviceName = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name ?? "Unknown Device"
         
+        // Filter: only show names starting with CNDingtek or DC59 (case-insensitive)
+        let lowerName = deviceName.lowercased()
+        if !(lowerName.hasPrefix("cndingtek") || lowerName.hasPrefix("dc59")) {
+            return
+        }
+        
         // On iOS, we cannot read real MAC; show UUID for identification
         
         let device = Device(
@@ -442,6 +460,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
                    error: Error?) {
+        guard dataProcessingEnabled else { return }
         guard error == nil else {
             print("更新特征值失败: \(error!.localizedDescription)")
             return
@@ -501,6 +520,27 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             } else if lastSentCommand.hasPrefix("AT+FTIME=") {
                 if let valStr = lastSentCommand.split(separator: "=").last, let v = Int(valStr) {
                     var p = deviceParams; p.fastTime = v
+                    DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+                }
+            } else if lastSentCommand.hasPrefix("AT+ONTH=") {
+                if let valStr = lastSentCommand.split(separator: "=").last, let v = Int(valStr) {
+                    var p = deviceParams; p.sensitivity = v
+                    DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+                }
+            } else if lastSentCommand.hasPrefix("AT+R1=") || lastSentCommand.hasPrefix("AT+R2=") || lastSentCommand.hasPrefix("AT+R3=") {
+                let parts = lastSentCommand.split(separator: "=")
+                if parts.count == 2, let v = Double(parts[1]) {
+                    let meters = v / 100.0
+                    var p = deviceParams
+                    if lastSentCommand.hasPrefix("AT+R1=") { p.range1 = meters }
+                    if lastSentCommand.hasPrefix("AT+R2=") { p.range2 = meters }
+                    if lastSentCommand.hasPrefix("AT+R3=") { p.range3 = meters }
+                    DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+                }
+            } else if lastSentCommand.hasPrefix("AT+HOLD=") {
+                if let valStr = lastSentCommand.split(separator: "=").last, let v = Int(valStr) {
+                    let seconds = v / 10
+                    var p = deviceParams; p.holdFrame = v; p.exitDelay = seconds
                     DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
                 }
             } else if currentOperation == .restore && lastSentCommand == "AT+INIT" {
@@ -605,8 +645,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             return
         }
 
-        // Capture window from GPIO ... MR1TH= by concatenating lines
-        if response.range(of: "(?i)gpio", options: .regularExpression) != nil && !paramCaptureActive {
+        // Capture window from GPIO ... MR1TH= by concatenating lines (only in read flow)
+        if currentOperation == .read,
+           response.range(of: "(?i)gpio", options: .regularExpression) != nil && !paramCaptureActive {
             paramCaptureActive = true
             paramCaptureBuffer = ""
             print("CAPTURE: start GPIO")
@@ -630,7 +671,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
                 self?.deviceParams = zero
             }
         }
-        if paramCaptureActive {
+        if currentOperation == .read, paramCaptureActive {
             let part = response.components(separatedBy: CharacterSet.whitespacesAndNewlines).joined()
             paramCaptureBuffer += part
             if response.range(of: "(?i)mr1th\\s*=", options: .regularExpression) != nil {
@@ -670,8 +711,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
                 }
             }
         }
-        // 2.5 Range handling, including inline concatenations
-        if let currentPending = pendingRangeKey {
+        // 2.5 Range handling, including inline concatenations (only in read flow)
+        if currentOperation == .read, let currentPending = pendingRangeKey {
             if let inlineKeyRegex = try? NSRegularExpression(pattern: "(?i)range(\\d)\\s*=", options: []),
                let inlineMatch = inlineKeyRegex.firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
                 let keyStr = (response as NSString).substring(with: inlineMatch.range(at: 1))
@@ -726,7 +767,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
                 return
             }
         }
-        if let inlineBothRegex = try? NSRegularExpression(pattern: "(?i)\\brange(\\d)\\s*=\\s*(\\d+(?:\\.\\d+)?)\\s*[m\\uFF4D]\\b", options: []),
+        if currentOperation == .read,
+           let inlineBothRegex = try? NSRegularExpression(pattern: "(?i)\\brange(\\d)\\s*=\\s*(\\d+(?:\\.\\d+)?)\\s*[m\\uFF4D]\\b", options: []),
            let bothMatch = inlineBothRegex.firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
             let kRange = bothMatch.range(at: 1)
             let vRange = bothMatch.range(at: 2)
@@ -749,7 +791,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             return
         }
         // Split-line handling: "RangeX=" on its own line
-        if let keyRegex = try? NSRegularExpression(pattern: "(?i)^\\s*range(\\d)\\s*=\\s*$", options: []),
+        if currentOperation == .read,
+           let keyRegex = try? NSRegularExpression(pattern: "(?i)^\\s*range(\\d)\\s*=\\s*$", options: []),
            let keyMatch = keyRegex.firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
             let keyRange = keyMatch.range(at: 1)
             let keyStr = (response as NSString).substring(with: keyRange)
@@ -762,7 +805,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             
             return
         }
-        if let key = pendingRangeKey {
+        if currentOperation == .read, let key = pendingRangeKey {
             // Pure numeric line in config mode (meters only)
             if let valRegex = try? NSRegularExpression(pattern: "(?i)^\\s*(\\d+(?:\\.\\d+)?)\\s*[m\\uFF4D]\\s*$", options: []),
                let valMatch = valRegex.firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
@@ -788,12 +831,12 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             // console prefix not parsed; only raw line is considered
         }
         // While collecting a range segment, accumulate content for robust extraction
-        if pendingRangeKey != nil {
+        if currentOperation == .read, pendingRangeKey != nil {
             rangeSegmentBuffer += (rangeSegmentBuffer.isEmpty ? response : (" " + response))
         }
         
         // Boundary markers: when MR1TH appears, commit any pending range (typically after Range3 sequence)
-        if response.range(of: "(?i)mr1th", options: .regularExpression) != nil {
+        if currentOperation == .read, response.range(of: "(?i)mr1th", options: .regularExpression) != nil {
             commitPendingRange(reason: "MR1TH boundary")
         }
 
@@ -812,6 +855,13 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             } else {
                 appendLog("[\(formatTime())] Status: OFF")
             }
+        } else if response.trimmingCharacters(in: .whitespacesAndNewlines) == "0" {
+            let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? "en"
+            if lang == "zh-Hans" {
+                appendLog("[\(formatTime())] 无目标")
+            } else {
+                appendLog("[\(formatTime())] no object")
+            }
         } else if let regex = try? NSRegularExpression(pattern: #"^([0-2])\s*,\s*(\d+)cm(?:\s*,\s*(\d+))?"#, options: []),
                   let match = regex.firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
             isRunningMode = true
@@ -825,23 +875,28 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             if currentOperation == .read { finalizeReading() }
         }
         
-        // 4. Parameters (Parsing complex string)
-        parseParameters(response)
+        // 4. Parameters (Parsing complex string) — only during explicit read flow
+        if currentOperation == .read {
+            parseParameters(response)
+        }
     }
     
     private func monitorHumanText(code: Int, dist: Int) -> String {
         let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? "en"
+        if dist == 0 {
+            return lang == "zh-Hans" ? "无目标" : "no object"
+        }
         if lang == "zh-Hans" {
             switch code {
             case 1: return "检测到运动，距离\(dist)cm"
             case 2: return "检测到微动，距离\(dist)cm"
-            default: return "未发现目标"
+            default: return "无目标"
             }
         } else {
             switch code {
             case 1: return "motion detected \(dist)cm"
             case 2: return "presence detected \(dist)cm"
-            default: return "no presence"
+            default: return "no object"
             }
         }
     }

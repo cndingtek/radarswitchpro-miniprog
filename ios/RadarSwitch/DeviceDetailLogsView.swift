@@ -53,7 +53,8 @@ struct DeviceDetailLogsView: View {
                     // Logs ScrollView
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 4) {
-                            ForEach(logs.suffix(logLimit).reversed(), id: \.self) { log in
+                            let recent = Array(logs.suffix(logLimit).reversed())
+                            ForEach(Array(recent.enumerated()), id: \.offset) { _, log in
                                 Text(log)
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundColor(AppColors.textSecondary)

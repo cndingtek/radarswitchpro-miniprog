@@ -42,10 +42,21 @@ struct ContentView: View {
         .onAppear {
             viewModel.updateBLEManager(bleManager)
             bleManager.requestBluetoothPermission()
+            bleManager.setDataProcessingEnabled(false)
+        }
+        .onChange(of: selectedTab) { _, newTab in
+            if newTab != 0 {
+                bleManager.stopScanning()
+            }
+            // Enable data processing only on Device Detail tab
+            bleManager.setDataProcessingEnabled(newTab == 2)
         }
         .onChange(of: viewModel.selectedDevice) { oldDevice, newDevice in
             if let device = newDevice, device.isConnected {
-                selectedTab = 2 // Navigate to Device Detail
+                selectedTab = 2
+                bleManager.setDataProcessingEnabled(true)
+            } else if newDevice == nil {
+                bleManager.setDataProcessingEnabled(false)
             }
         }
         .preferredColorScheme(.dark) // Force dark mode

@@ -13,7 +13,7 @@ struct DeviceDetailParamsView: View {
         if appLanguage == "zh-Hans" {
             switch key {
             case "Read-only Mode": return "只读模式"
-            case "Locked": return "锁定"
+            case "Locked": return "只读"
             case "Editable": return "可编辑"
             case "Unlocked • Editable now": return "已解锁 • 现在可编辑"
             case "Locked • View only, cannot edit": return "已锁定 • 仅查看，不能编辑"

@@ -195,6 +195,11 @@ class MainViewModel: ObservableObject {
     func removeSavedDevice(_ device: SavedDevice) {
         savedDevices.removeAll(where: { $0.id == device.id })
         persistSavedDevices()
+        if let current = selectedDevice, current.id == device.id {
+            bleManager.disconnectFromDevice(current)
+            selectedDevice = nil
+            parameters = nil
+        }
     }
     
     private func persistSavedDevices() {

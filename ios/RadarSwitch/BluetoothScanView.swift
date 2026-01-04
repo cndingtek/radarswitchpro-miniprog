@@ -41,9 +41,12 @@ struct BluetoothScanView: View {
                                 .foregroundColor(AppColors.textGray)
                             
                             Button(action: {
-                                isScanning.toggle()
-                                if isScanning {
+                                let next = !isScanning
+                                isScanning = next
+                                if next {
                                     viewModel.scanForDevices()
+                                } else {
+                                    viewModel.bleManager.stopScanning()
                                 }
                             }) {
                                 Text(isScanning ? l("Stop") : l("Start"))
@@ -75,7 +78,10 @@ struct BluetoothScanView: View {
             .padding(16)
         }
         .onAppear {
-            // Auto start scan? Maybe not, let user decide or respect state
+            isScanning = viewModel.bleManager.isScanning
+        }
+        .onReceive(viewModel.bleManager.$isScanning) { scanning in
+            isScanning = scanning
         }
     }
 }
