@@ -13,6 +13,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     @Published var distanceHistory: [Int] = [] // Store distance values
     @Published var distanceSeries: [DistanceSample] = []
     @Published var lastToast: String?
+    enum HardwareType { case unknown, modelA, modelB }
+    @Published var hardwareType: HardwareType = .unknown
     
     private var centralManager: CBCentralManager!
     private var connectedPeripheral: CBPeripheral?
@@ -35,6 +37,8 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     private var paramCaptureBuffer: String = ""
     private var commandTimeoutWork: DispatchWorkItem?
     private var lastSentCommand: String = ""
+    private var pendingBinaryCommands: [Data] = []
+    private var lastAParamId: UInt16?
     
     private enum OperationType { case none, read, save, restore }
     private var currentOperation: OperationType = .none
@@ -60,6 +64,38 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         centralManager = CBCentralManager(delegate: self, queue: nil)
     }
     
+    private func handleBinaryA(_ data: Data) {
+        if data.count < 12 { return }
+        let bytes = [UInt8](data)
+        let cmdLo = bytes[6]
+        let cmdHi = bytes[7]
+        let statusLo = bytes[8]
+        let statusHi = bytes[9]
+        if statusLo != 0x00 || statusHi != 0x00 { return }
+        if cmdLo == 0x08 && cmdHi == 0x01 {
+            let val = Int(bytes[10])
+            if let pid = lastAParamId {
+                switch pid {
+                case 0x0001:
+                    let meters = Double(val) * 0.75
+                    var p = deviceParams; p.range3 = meters
+                    DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+                case 0x0000:
+                    let meters = Double(val) * 0.75
+                    var p = deviceParams; p.range1 = meters
+                    DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+                case 0x0004:
+                    var p = deviceParams; p.exitDelay = val
+                    DispatchQueue.main.async { [weak self] in self?.deviceParams = p }
+                default: break
+                }
+            }
+            isSending = false
+            commandTimeoutWork?.cancel(); commandTimeoutWork = nil
+            lastAParamId = nil
+            processQueue()
+        }
+    }
     // MARK: - Public Methods
     
     func requestBluetoothPermission() {
@@ -179,48 +215,54 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     
     func readParameters() {
         currentOperation = .read
-        bypassHandshake = false
-        isInHandshake = false
-        handshakeCompleted = false
-        pendingCommands.removeAll()
-        
-        queueCommand("AT+R1?\r\n")
-        queueCommand("AT+R2?\r\n")
-        queueCommand("AT+R3?\r\n")
-        queueCommand("AT+ONTH?\r\n")
-        queueCommand("AT+HOLD?\r\n")
-        queueCommand("AT+STIME=100\r\n")
-        queueCommand("AT+FTIME=100\r\n")
-        
-        startHandshake()
+        if hardwareType == .modelA {
+            pendingBinaryCommands.removeAll()
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x04,0x00,0x08,0x00,0x01,0x00,0x04,0x03,0x02,0x01]))
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x04,0x00,0x08,0x00,0x00,0x00,0x04,0x03,0x02,0x01]))
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x04,0x00,0x08,0x00,0x04,0x00,0x04,0x03,0x02,0x01]))
+            processQueue()
+        } else {
+            bypassHandshake = false
+            isInHandshake = false
+            handshakeCompleted = false
+            pendingCommands.removeAll()
+            queueCommand("AT+R1?\r\n")
+            queueCommand("AT+R2?\r\n")
+            queueCommand("AT+R3?\r\n")
+            queueCommand("AT+ONTH?\r\n")
+            queueCommand("AT+HOLD?\r\n")
+            queueCommand("AT+STIME=100\r\n")
+            queueCommand("AT+FTIME=100\r\n")
+            startHandshake()
+        }
     }
     
     func saveParameters(_ params: DeviceParameters) {
         currentOperation = .save
-        // Always reset handshake state for new operation
-        handshakeCompleted = false
-        pendingCommands.removeAll()
-        
-        // HOLD time calculation:
-        // UI value is seconds.
-        // FTIME is fixed at 100ms (0.1s).
-        // Command AT+HOLD=value expects value in units of FTIME.
-        // So, AT+HOLD = UI_Seconds * 10
-        // Example: UI=20s -> HOLD=200 (200 * 0.1s = 20s)
-        let hold = params.exitDelay * 10
-        
-        // Queue distance commands in centimeters (e.g., 2.0m -> 200)
-        queueCommand("AT+R1=\(Int(params.range1 * 100))\r\n")
-        queueCommand("AT+R2=\(Int(params.range2 * 100))\r\n")
-        queueCommand("AT+R3=\(Int(params.range3 * 100))\r\n")
-        queueCommand("AT+ONTH=\(params.sensitivity)\r\n") // SENS maps to ONTH? Need to verify Android logic, assuming simple map
-        // Do not send TRITH; fix SlowTime as requested
-        queueCommand("AT+STIME=10\r\n")
-        queueCommand("AT+HOLD=\(hold)\r\n")
-        queueCommand("AT+FTIME=100\r\n")
-        
-        // Start handshake
-        startHandshake()
+        if hardwareType == .modelA {
+            pendingBinaryCommands.removeAll()
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x04,0x00,0xFF,0x00,0x01,0x00,0x04,0x03,0x02,0x01]))
+            let minUnits = UInt8(max(0, Int(round(params.range1 / 0.75))))
+            let maxUnits = UInt8(max(0, Int(round(params.range3 / 0.75))))
+            let dis = UInt8(max(0, min(255, params.exitDelay)))
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x0E,0x00,0x07,0x00,0x00,0x00,minUnits,0x00,0x00,0x00,0x2F,0x00,0x64,0x00,0x00,0x00,0x04,0x03,0x02,0x01]))
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x0E,0x00,0x07,0x00,0x01,0x00,maxUnits,0x00,0x00,0x00,0x2F,0x00,0x64,0x00,0x00,0x00,0x04,0x03,0x02,0x01]))
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x0E,0x00,0x07,0x00,0x04,0x00,dis,0x00,0x00,0x00,0x2F,0x00,0x64,0x00,0x00,0x00,0x04,0x03,0x02,0x01]))
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x02,0x00,0xFE,0x00,0x04,0x03,0x02,0x01]))
+            processQueue()
+        } else {
+            handshakeCompleted = false
+            pendingCommands.removeAll()
+            let hold = params.exitDelay * 10
+            queueCommand("AT+R1=\(Int(params.range1 * 100))\r\n")
+            queueCommand("AT+R2=\(Int(params.range2 * 100))\r\n")
+            queueCommand("AT+R3=\(Int(params.range3 * 100))\r\n")
+            queueCommand("AT+ONTH=\(params.sensitivity)\r\n")
+            queueCommand("AT+STIME=10\r\n")
+            queueCommand("AT+HOLD=\(hold)\r\n")
+            queueCommand("AT+FTIME=100\r\n")
+            startHandshake()
+        }
     }
     
     func sendCommand(_ command: String) {
@@ -237,6 +279,30 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
     
     private func processQueue() {
         guard !isSending else { return }
+        if hardwareType == .modelA {
+            guard !pendingBinaryCommands.isEmpty else {
+                if currentOperation != .none {
+                    DispatchQueue.main.async {
+                        switch self.currentOperation {
+                        case .save: self.lastToast = "Saved Successfully"
+                        case .restore: self.lastToast = "Restored Successfully"
+                        case .read: self.lastToast = "Switched to Read-only Mode"
+                        default: break
+                        }
+                        self.currentOperation = .none
+                    }
+                }
+                return
+            }
+            let d = pendingBinaryCommands.removeFirst()
+            if d.count >= 10 && d[6] == 0x08 && d[7] == 0x00 {
+                let idLo = d[8]
+                let idHi = d[9]
+                lastAParamId = UInt16(idLo) | (UInt16(idHi) << 8)
+            }
+            sendBinary(d)
+            return
+        }
         
         // If running or handshake not complete, initiate handshake
         if (isRunningMode || !handshakeCompleted) && !bypassHandshake {
@@ -311,11 +377,50 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         commandTimeoutWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
     }
+    
+    private func hexString(_ data: Data) -> String {
+        data.map { String(format: "%02X", $0) }.joined()
+    }
+    
+    private func sendBinary(_ frame: Data) {
+        guard let peripheral = connectedPeripheral,
+              let characteristic = writeCharacteristic else { return }
+        isSending = true
+        let type: CBCharacteristicWriteType = characteristic.properties.contains(.write) ? .withResponse : .withoutResponse
+        peripheral.writeValue(frame, for: characteristic, type: type)
+        lastSentCommand = "BIN:" + hexString(frame)
+        commandTimeoutWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.isSending = false
+            let key = self.lastSentCommand
+            let c = self.retryCounts[key] ?? 0
+            if c < 3 {
+                self.retryCounts[key] = c + 1
+                self.pendingBinaryCommands.insert(frame, at: 0)
+                self.processQueue()
+                return
+            }
+            self.processQueue()
+        }
+        commandTimeoutWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+    }
 
     func restoreDefaults() {
         currentOperation = .restore
-        bypassHandshake = true
-        sendCommand("AT+INIT") // sendCommand adds \r\n automatically now
+        if hardwareType == .modelA {
+            pendingBinaryCommands.removeAll()
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x04,0x00,0xFF,0x00,0x01,0x00,0x04,0x03,0x02,0x01]))
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x0E,0x00,0x07,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x2F,0x00,0x64,0x00,0x00,0x00,0x04,0x03,0x02,0x01]))
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x0E,0x00,0x07,0x00,0x01,0x00,0x04,0x00,0x00,0x00,0x2F,0x00,0x64,0x00,0x00,0x00,0x04,0x03,0x02,0x01]))
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x0E,0x00,0x07,0x00,0x04,0x00,0x1E,0x00,0x00,0x00,0x2F,0x00,0x64,0x00,0x00,0x00,0x04,0x03,0x02,0x01]))
+            pendingBinaryCommands.append(Data([0xFD,0xFC,0xFB,0xFA,0x02,0x00,0xFE,0x00,0x04,0x03,0x02,0x01]))
+            processQueue()
+        } else {
+            bypassHandshake = true
+            sendCommand("AT+INIT")
+        }
     }
     
     // MARK: - CBCentralManagerDelegate
@@ -466,10 +571,25 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             return
         }
         
-        guard let data = characteristic.value,
-              let response = String(data: data, encoding: .utf8) else {
-            print("无法解析特征值")
-            return
+        guard let data = characteristic.value else { return }
+        if data.count >= 4 {
+            let hdr = [UInt8](data.prefix(4))
+            if hdr == [0xFD,0xFC,0xFB,0xFA] {
+                hardwareType = .modelA
+                handleBinaryA(data)
+                return
+            }
+        }
+        guard let response = String(data: data, encoding: .utf8) else { return }
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hardwareType == .unknown {
+            if let rangeDetect = try? NSRegularExpression(pattern: #"(?i)^\s*Range\s+\d+\s*$"#, options: []),
+               rangeDetect.firstMatch(in: trimmed, options: [], range: NSRange(location: 0, length: (trimmed as NSString).length)) != nil {
+                hardwareType = .modelA
+            } else if let bDetect = try? NSRegularExpression(pattern: #"^\s*[0-2]\s*,\s*\d+cm"#, options: []),
+                      bDetect.firstMatch(in: trimmed, options: [], range: NSRange(location: 0, length: (trimmed as NSString).length)) != nil {
+                hardwareType = .modelB
+            }
         }
         
         print("RX: \(response)")
@@ -844,16 +964,16 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
         if response.contains("ON") {
             let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? "en"
             if lang == "zh-Hans" {
-                appendLog("[\(formatTime())] 状态：开启")
+                appendLog("[\(formatTime())] 检测到运动")
             } else {
-                appendLog("[\(formatTime())] Status: ON")
+                appendLog("[\(formatTime())] motion")
             }
         } else if response.contains("OFF") {
             let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? "en"
             if lang == "zh-Hans" {
-                appendLog("[\(formatTime())] 状态：关闭")
+                appendLog("[\(formatTime())] 无目标")
             } else {
-                appendLog("[\(formatTime())] Status: OFF")
+                appendLog("[\(formatTime())] no object")
             }
         } else if response.trimmingCharacters(in: .whitespacesAndNewlines) == "0" {
             let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? "en"
@@ -862,6 +982,19 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             } else {
                 appendLog("[\(formatTime())] no object")
             }
+        } else if let rangeM = try? NSRegularExpression(pattern: #"(?i)^\s*Range\s+(\d+)\s*$"#, options: []),
+                  let m = rangeM.firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
+            let distStr = (response as NSString).substring(with: m.range(at: 1))
+            let dist = Int(distStr) ?? 0
+            let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? "en"
+            if lang == "zh-Hans" {
+                appendLog("[\(formatTime())] 距离\(dist)cm")
+            } else {
+                appendLog("[\(formatTime())] distance \(dist)cm")
+            }
+            appendDistance(dist)
+            if hardwareType != .modelB { hardwareType = .modelA }
+            isRunningMode = true
         } else if let regex = try? NSRegularExpression(pattern: #"^([0-2])\s*,\s*(\d+)cm(?:\s*,\s*(\d+))?"#, options: []),
                   let match = regex.firstMatch(in: response, options: [], range: NSRange(location: 0, length: (response as NSString).length)) {
             isRunningMode = true
@@ -869,8 +1002,16 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeriph
             let distStr = (response as NSString).substring(with: match.range(at: 2))
             let code = Int(codeStr) ?? 0
             let dist = Int(distStr) ?? 0
-            let human = monitorHumanText(code: code, dist: dist)
-            appendLog("[\(formatTime())] \(human)")
+            let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? "en"
+            let statusZh = (code == 0 ? "无目标" : (code == 1 ? "检测到运动" : "检测到微动"))
+            let statusEn = (code == 0 ? "no object" : (code == 1 ? "motion" : "presence"))
+            if lang == "zh-Hans" {
+                appendLog("[\(formatTime())] " + statusZh)
+                appendLog("[\(formatTime())] 距离\(dist)cm")
+            } else {
+                appendLog("[\(formatTime())] " + statusEn)
+                appendLog("[\(formatTime())] distance \(dist)cm")
+            }
             appendDistance(dist)
             if currentOperation == .read { finalizeReading() }
         }

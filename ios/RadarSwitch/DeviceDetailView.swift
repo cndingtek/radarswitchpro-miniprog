@@ -77,5 +77,10 @@ struct DeviceDetailView: View {
             }
             .padding(16)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .GuideSelectDetailMode)) { notif in
+            if let mode = notif.userInfo?["mode"] as? Int {
+                selectedMode = mode
+            }
+        }
     }
 }

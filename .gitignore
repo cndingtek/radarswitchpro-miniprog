@@ -1,59 +1,7 @@
-# Android/Gradle
-.gradle/
-build/
-**/build/
-**/outputs/
-**/tmp/
-**/snapshot/
-
-# Non-standard local build outputs
-app/build2/
-app/build3/
-
-# Local keystore (do not commit signing material)
-app/keystore/
-
-# Local SDK and tools (environment-specific)
-.android-sdk/
-.tools/
-android-sdk/
-# Local configuration
-local.properties
-
-# IDE
-*.iml
-.idea/
-.trae/
-
-# Native build
-.externalNativeBuild/
-.cxx/
-
-# Captures and previews (screenshots)
-captures/
-
-# Logs and dumps
-*.log
-# logcat 系列（含以点开头的文件名）
-logcat*.txt
-logcat-*.txt
-.logcat*.txt
-# 本地构建日志
-buildlog*.txt
-# 其他运行时产物
-*.pid
-uidump.xml
-window_dump.xml
-
-# OS files
+AppStoreAssets/Guide-screenshot/
+android-model-a/
 .DS_Store
-Thumbs.db
-
-# iOS / Xcode
-*.derivedData
-*.xcuserstate
-xcuserdata/
-DerivedData/
-*.ipa
-*.dSYM.zip
-*.dSYM
+*/.DS_Store
+ios/build/
+ios/RadarSwitch.xcodeproj/**/xcuserdata/
+screen_for_review/

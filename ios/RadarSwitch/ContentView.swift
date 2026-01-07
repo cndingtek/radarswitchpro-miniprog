@@ -59,6 +59,19 @@ struct ContentView: View {
                 bleManager.setDataProcessingEnabled(false)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .GuideNavigateTab)) { notif in
+            if let idx = notif.userInfo?["index"] as? Int {
+                selectedTab = idx
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .GuideSwitchLanguage)) { notif in
+            if let lang = notif.userInfo?["lang"] as? String {
+                UserDefaults.standard.set(lang, forKey: "appLanguage")
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .GuideReadParams)) { _ in
+            bleManager.readParameters()
+        }
         .preferredColorScheme(.dark) // Force dark mode
     }
 }

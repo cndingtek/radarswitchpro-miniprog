@@ -21,6 +21,8 @@ struct DeviceDetailParamsView: View {
             case "Far Distance": return "远距"
             case "Mid Distance": return "中距"
             case "Near Distance": return "近距"
+            case "Max Distance": return "最大距离"
+            case "Min Distance": return "最小距离"
             case "Delay": return "延时设置"
             case "Trigger Sensitivity": return "触发灵敏度"
             case "Delay Time": return "延迟时间"
@@ -106,57 +108,79 @@ struct DeviceDetailParamsView: View {
                         .font(AppFonts.subheadline())
                         .foregroundColor(AppColors.textWhite)
                     
-                    // Far Distance
-                    CustomSliderRow(
-                        title: l("Far Distance"), 
-                        value: Binding(
-                            get: { localParams.range3 },
-                            set: { newVal in
-                                localParams.range3 = newVal
-                                // Constraint: Near <= Mid <= Far
-                                if localParams.range2 > newVal { localParams.range2 = newVal }
-                                if localParams.range1 > newVal { localParams.range1 = newVal }
-                            }
-                        ), 
-                        range: 0...10, 
-                        unit: "m", 
-                        isEnabled: isEditable
-                    )
-                    
-                    // Mid Distance
-                    CustomSliderRow(
-                        title: l("Mid Distance"), 
-                        value: Binding(
-                            get: { localParams.range2 },
-                            set: { newVal in
-                                // Constraint: Near <= Mid <= Far
-                                var val = newVal
-                                if val > localParams.range3 { val = localParams.range3 }
-                                localParams.range2 = val
-                                if localParams.range1 > val { localParams.range1 = val }
-                            }
-                        ), 
-                        range: 0...10, 
-                        unit: "m", 
-                        isEnabled: isEditable
-                    )
-                    
-                    // Near Distance
-                    CustomSliderRow(
-                        title: l("Near Distance"), 
-                        value: Binding(
-                            get: { localParams.range1 },
-                            set: { newVal in
-                                // Constraint: Near <= Mid <= Far
-                                var val = newVal
-                                if val > localParams.range2 { val = localParams.range2 }
-                                localParams.range1 = val
-                            }
-                        ), 
-                        range: 0...10, 
-                        unit: "m", 
-                        isEnabled: isEditable
-                    )
+                    if viewModel.bleManager.hardwareType == .modelA {
+                        CustomSliderRow(
+                            title: l("Max Distance"),
+                            value: Binding(
+                                get: { localParams.range3 },
+                                set: { newVal in
+                                    localParams.range3 = newVal
+                                    if localParams.range1 > newVal { localParams.range1 = newVal }
+                                }
+                            ),
+                            range: 0...10,
+                            unit: "m",
+                            isEnabled: isEditable
+                        )
+                        CustomSliderRow(
+                            title: l("Min Distance"),
+                            value: Binding(
+                                get: { localParams.range1 },
+                                set: { newVal in
+                                    var val = newVal
+                                    if val > localParams.range3 { val = localParams.range3 }
+                                    localParams.range1 = val
+                                }
+                            ),
+                            range: 0...10,
+                            unit: "m",
+                            isEnabled: isEditable
+                        )
+                    } else {
+                        CustomSliderRow(
+                            title: l("Far Distance"), 
+                            value: Binding(
+                                get: { localParams.range3 },
+                                set: { newVal in
+                                    localParams.range3 = newVal
+                                    if localParams.range2 > newVal { localParams.range2 = newVal }
+                                    if localParams.range1 > newVal { localParams.range1 = newVal }
+                                }
+                            ), 
+                            range: 0...10, 
+                            unit: "m", 
+                            isEnabled: isEditable
+                        )
+                        CustomSliderRow(
+                            title: l("Mid Distance"), 
+                            value: Binding(
+                                get: { localParams.range2 },
+                                set: { newVal in
+                                    var val = newVal
+                                    if val > localParams.range3 { val = localParams.range3 }
+                                    localParams.range2 = val
+                                    if localParams.range1 > val { localParams.range1 = val }
+                                }
+                            ), 
+                            range: 0...10, 
+                            unit: "m", 
+                            isEnabled: isEditable
+                        )
+                        CustomSliderRow(
+                            title: l("Near Distance"), 
+                            value: Binding(
+                                get: { localParams.range1 },
+                                set: { newVal in
+                                    var val = newVal
+                                    if val > localParams.range2 { val = localParams.range2 }
+                                    localParams.range1 = val
+                                }
+                            ), 
+                            range: 0...10, 
+                            unit: "m", 
+                            isEnabled: isEditable
+                        )
+                    }
                 }
             }
             
@@ -167,23 +191,24 @@ struct DeviceDetailParamsView: View {
                         .font(AppFonts.subheadline())
                         .foregroundColor(AppColors.textWhite)
                     
-                    // Trigger Sensitivity (Int 1-10)
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(l("Trigger Sensitivity"))
-                                .font(AppFonts.body())
-                                .foregroundColor(AppColors.textSecondary)
-                            Spacer()
-                            Text("\(localParams.sensitivity)")
-                                .font(AppFonts.body())
-                                .foregroundColor(isEditable ? AppColors.primaryBlue : AppColors.textGray)
+                    if viewModel.bleManager.hardwareType != .modelA {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(l("Trigger Sensitivity"))
+                                    .font(AppFonts.body())
+                                    .foregroundColor(AppColors.textSecondary)
+                                Spacer()
+                                Text("\(localParams.sensitivity)")
+                                    .font(AppFonts.body())
+                                    .foregroundColor(isEditable ? AppColors.primaryBlue : AppColors.textGray)
+                            }
+                            Slider(value: Binding(
+                                get: { Double(localParams.sensitivity) },
+                                set: { localParams.sensitivity = Int($0) }
+                            ), in: 1...10, step: 1)
+                            .accentColor(isEditable ? AppColors.primaryBlue : AppColors.textGray)
+                            .disabled(!isEditable)
                         }
-                        Slider(value: Binding(
-                            get: { Double(localParams.sensitivity) },
-                            set: { localParams.sensitivity = Int($0) }
-                        ), in: 1...10, step: 1)
-                        .accentColor(isEditable ? AppColors.primaryBlue : AppColors.textGray)
-                        .disabled(!isEditable)
                     }
                     
                     // Delay Time (Stepper 1-999)
@@ -250,6 +275,10 @@ struct DeviceDetailParamsView: View {
             if let m = msg {
                 showToastMessage(l(m))
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .GuideToggleEditable)) { _ in
+            isEditable = true
+            showToastMessage(l("Unlocked • Editable now"))
         }
         .onAppear {
             viewModel.bleManager.readParameters() // Auto read on appear

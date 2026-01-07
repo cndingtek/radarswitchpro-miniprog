@@ -1,4 +1,10 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+#if canImport(Photos)
+import Photos
+#endif
 
 // MARK: - Card Component
 struct CardView<Content: View>: View {
@@ -311,3 +317,181 @@ extension View {
         self.modifier(ToastModifier(isShowing: isShowing, message: message))
     }
 }
+
+// MARK: - Guide Notifications
+extension Notification.Name {
+    static let GuideNavigateTab = Notification.Name("GuideNavigateTab")
+    static let GuideSwitchLanguage = Notification.Name("GuideSwitchLanguage")
+    static let GuideReadParams = Notification.Name("GuideReadParams")
+    static let GuideSelectDetailMode = Notification.Name("GuideSelectDetailMode")
+    static let GuideToggleEditable = Notification.Name("GuideToggleEditable")
+}
+
+struct ThumbnailPreview<Content: View>: View {
+    var imageName: String?
+    var imagePath: String?
+    var content: Content
+    var size: CGSize = CGSize(width: 300, height: 180)
+    
+    init(imageName: String? = nil, imagePath: String? = nil, size: CGSize = CGSize(width: 300, height: 180), @ViewBuilder content: () -> Content) {
+        self.imageName = imageName
+        self.imagePath = imagePath
+        self.size = size
+        self.content = content()
+    }
+    // Convenience initializer for image-only usage (no content builder)
+    init(imageName: String? = nil, imagePath: String? = nil, size: CGSize = CGSize(width: 300, height: 180)) where Content == EmptyView {
+        self.imageName = imageName
+        self.imagePath = imagePath
+        self.size = size
+        self.content = EmptyView()
+    }
+    
+    var body: some View {
+        Group {
+            if let name = imageName {
+                #if canImport(UIKit)
+                if let uiImg = GuideImageProvider.image(named: name) {
+                    Image(uiImage: uiImg)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size.width, height: size.height)
+                        .clipped()
+                        .cornerRadius(12)
+                } else {
+                    Color.clear
+                        .frame(width: size.width, height: size.height)
+                        .cornerRadius(12)
+                }
+                #else
+                Color.clear
+                    .frame(width: size.width, height: size.height)
+                    .cornerRadius(12)
+                #endif
+            } else if let path = imagePath {
+                #if canImport(UIKit)
+                if let uiImg = UIImage(contentsOfFile: path) {
+                    Image(uiImage: uiImg)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size.width, height: size.height)
+                        .clipped()
+                        .cornerRadius(12)
+                } else {
+                    Color.clear
+                        .frame(width: size.width, height: size.height)
+                        .cornerRadius(12)
+                }
+                #else
+                Color.clear
+                    .frame(width: size.width, height: size.height)
+                    .cornerRadius(12)
+                #endif
+            } else {
+                Color.clear
+                    .frame(width: size.width, height: size.height)
+                    .cornerRadius(12)
+            }
+        }
+    }
+}
+
+#if canImport(UIKit)
+struct ActivityView: UIViewControllerRepresentable {
+    let items: [Any]
+    let applicationActivities: [UIActivity]? = nil
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: applicationActivities)
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif
+
+struct QRImage: View {
+    let imageName: String
+    @State private var showShare = false
+    @State private var showSavedAlert = false
+    @AppStorage("appLanguage") private var appLanguage = "en"
+    
+    private var uiImage: UIImage? {
+        #if canImport(UIKit)
+        return UIImage(named: imageName)
+        #else
+        return nil
+        #endif
+    }
+    
+    private var saveLabel: String { appLanguage == "zh-Hans" ? "保存图片" : "Save Image" }
+    private var shareLabel: String { appLanguage == "zh-Hans" ? "分享" : "Share" }
+    private var savedOK: String { appLanguage == "zh-Hans" ? "已保存到照片" : "Saved to Photos" }
+    private var savedFail: String { appLanguage == "zh-Hans" ? "保存失败" : "Save Failed" }
+    
+    var body: some View {
+        Image(imageName)
+            .resizable()
+            .scaledToFit()
+            .contextMenu {
+                Button(saveLabel) {
+                    saveToPhotos()
+                }
+                Button(shareLabel) {
+                    #if canImport(UIKit)
+                    showShare = true
+                    #endif
+                }
+            }
+            #if canImport(UIKit)
+            .sheet(isPresented: $showShare) {
+                if let img = uiImage {
+                    ActivityView(items: [img])
+                } else {
+                    ActivityView(items: [])
+                }
+            }
+            #endif
+            .alert(isPresented: $showSavedAlert) {
+                Alert(title: Text(savedOK))
+            }
+    }
+    
+    private func saveToPhotos() {
+        #if canImport(UIKit)
+        guard let img = uiImage else { return }
+        #if canImport(Photos)
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            if status == .authorized || status == .limited {
+                UIImageWriteToSavedPhotosAlbum(img, nil, nil, nil)
+                DispatchQueue.main.async { showSavedAlert = true }
+            } else {
+                DispatchQueue.main.async { showSavedAlert = true }
+            }
+        }
+        #else
+        UIImageWriteToSavedPhotosAlbum(img, nil, nil, nil)
+        DispatchQueue.main.async { showSavedAlert = true }
+        #endif
+        #endif
+    }
+}
+
+#if canImport(UIKit)
+final class GuideImageProvider {
+    static func image(named: String) -> UIImage? {
+        // Try language-specific asset names
+        let lang = UserDefaults.standard.string(forKey: "appLanguage") ?? "en"
+        let variants: [String] = {
+            if lang == "zh-Hans" {
+                return ["\(named)-zh", "\(named)_zh", "\(named)-cn", "\(named)_cn", named]
+            } else {
+                return ["\(named)-en", "\(named)_en", named]
+            }
+        }()
+        for v in variants {
+            if let asset = UIImage(named: v) { return asset }
+        }
+        return nil
+    }
+}
+#endif

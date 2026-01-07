@@ -1,5 +1,18 @@
 # RadarSwitch 更新日志
 
+## v1.1.2 — 2026-01-07
+
+变更摘要（iOS）：
+- 日志文案统一（A/B 型）：中文 ON/OFF → 检测到运动/无目标；英文 ON/OFF → motion/no object；距离行统一为 距离XXcm / distance XXcm；B 型 code=2→presence（中文：检测到微动）
+- A 型识别与数据：ASCII Range N 识别为 A 型；只读（08 00）读取最小/最大距离（值×0.75m）与目标消失时间（秒）；保存（FF→07→FE）按 米/0.75 四舍五入写入，消失时间按秒写入，附带 2F 00=100
+- 教程页：示教缩略预览使用真实截图（scan/devices/logs/params/settings_language）；移除自动生成回退内容
+- 关于页：网站/邮箱可点击（蓝色下划线仅用于链接部分）；新增二维码（中文：微信客服，英文：Whatsapp），支持长按“保存图片/分享”
+- 版本号：CFBundleShortVersionString 更新为 1.1.2
+
+合规与实现说明：
+- 保存图片使用 NSPhotoLibraryAddUsageDescription（“Save QR code image to Photos”）并请求 addOnly 权限
+- 分享使用系统 UIActivityViewController，无越权行为
+
 ## v1.1.1 — 2025-11-15
 
 变更摘要：

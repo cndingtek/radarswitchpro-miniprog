@@ -3,6 +3,7 @@ import SwiftUI
 struct BluetoothScanView: View {
     @ObservedObject var viewModel: MainViewModel
     @State private var isScanning = false
+    @State private var keyword: String = ""
     @AppStorage("appLanguage") private var appLanguage = "en"
     private func l(_ key: String) -> String {
         if appLanguage == "zh-Hans" {
@@ -63,12 +64,19 @@ struct BluetoothScanView: View {
                         Text(l("Search nearby radar switch devices"))
                             .font(AppFonts.caption())
                             .foregroundColor(AppColors.textGray)
+                        
+                        HStack {
+                            TextField(appLanguage == "zh-Hans" ? "输入关键字" : "Enter keyword", text: $keyword)
+                                .textFieldStyle(.roundedBorder)
+                                .font(AppFonts.caption())
+                                .foregroundColor(AppColors.textWhite)
+                        }
                     }
                 }
                 
                 // Device List
                 LazyVStack(spacing: 12) {
-                    ForEach(viewModel.devices) { device in
+                    ForEach(viewModel.devices.filter { keyword.isEmpty ? true : $0.name.lowercased().contains(keyword.lowercased()) }) { device in
                         ScanDeviceRow(device: device, onConnect: {
                             viewModel.connectToDevice(device)
                         })

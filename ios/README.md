@@ -101,6 +101,22 @@ RadarSwitch/
 
 详见 [Design](RadarSwitch/Design.md)。
 
+## 版本 1.1.2 更新
+
+- 日志文案统一（A/B 型）：
+  - 中文：ON → 检测到运动，OFF/0 → 无目标，距离行统一为 距离XXcm
+  - 英文：ON → motion，OFF/0 → no object，距离行统一为 distance XXcm
+  - B 型 code=2 细化为 presence（中文：检测到微动）
+- A 型识别与数据：
+  - ASCII Range N 行识别并归类为 A 型，距离写入曲线
+  - 只读查询（08 00）：读取最小/最大距离（值×0.75m）与目标消失时间（秒）
+  - 保存（FF 00→07 00→FE 00）：距离按 米/0.75 四舍五入为单位写入，消失时间按秒写入，附带保持阈值 2F 00=100
+- 教程与关于：
+  - 教程页使用真实截图缩略预览（scan/devices/logs/params/settings_language）
+  - 关于页支持点击网站/邮箱链接，二维码长按保存或分享（微信/Whatsapp）
+- 设置：
+  - 版本号更新为 1.1.2（CFBundleShortVersionString）
+
 ## 构建脚本
 
 使用提供的构建脚本自动化构建过程：
