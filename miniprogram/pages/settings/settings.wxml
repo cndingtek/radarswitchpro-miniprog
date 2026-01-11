@@ -1,0 +1,16 @@
+<view class="container">
+  <view class="list-group">
+    <view class="list-item">
+      <text class="item-label">语言</text>
+      <text class="item-value">简体中文</text>
+    </view>
+    <view class="list-item">
+      <text class="item-label">版本</text>
+      <text class="item-value">1.0.0</text>
+    </view>
+  </view>
+
+  <view class="footer">
+    <text>© 2024 CNDingtek. All rights reserved.</text>
+  </view>
+</view>

@@ -1,0 +1,28 @@
+<view class="container">
+  <view class="header">
+    <text class="title">我的设备</text>
+    <view class="loading" wx:if="{{isScanning}}">
+      <text>扫描中...</text>
+    </view>
+  </view>
+
+  <view class="device-list">
+    <block wx:if="{{devices.length === 0}}">
+      <view class="empty-state">
+        <text>未发现设备</text>
+        <button class="scan-btn" bindtap="startScan">重新扫描</button>
+      </view>
+    </block>
+    
+    <block wx:else>
+      <view class="device-item" wx:for="{{devices}}" wx:key="deviceId" data-id="{{item.deviceId}}" bindtap="connectDevice">
+        <view class="device-info">
+          <text class="device-name">{{item.name || 'Unknown Device'}}</text>
+          <text class="device-id">UUID: {{item.deviceId}}</text>
+          <text class="device-rssi">RSSI: {{item.RSSI}}</text>
+        </view>
+        <view class="connect-btn">连接</view>
+      </view>
+    </block>
+  </view>
+</view>

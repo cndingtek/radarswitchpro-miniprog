@@ -1,0 +1,78 @@
+<view class="container">
+  
+  <!-- Lock Status Card -->
+  <view class="card">
+    <view class="card-header">
+      <text class="card-title">只读模式</text>
+      <view class="lock-toggle">
+        <view class="toggle-btn {{!isEditable ? 'active' : ''}}" bindtap="setReadOnly">只读</view>
+        <view class="toggle-btn {{isEditable ? 'active' : ''}}" bindtap="setEditable">可编辑</view>
+      </view>
+    </view>
+    <view class="lock-status">
+      <icon type="{{isEditable ? 'info' : 'warn'}}" size="16" color="{{isEditable ? '#007aff' : '#888'}}"/>
+      <text class="status-text">{{isEditable ? '已解锁 • 现在可编辑' : '已锁定 • 仅查看，不能编辑'}}</text>
+    </view>
+  </view>
+
+  <!-- Distance Settings -->
+  <view class="card">
+    <text class="card-title">感应距离 (米)</text>
+    
+    <!-- Range 3 (Max/Far) -->
+    <view class="slider-row">
+      <view class="slider-info">
+        <text class="label">{{hardwareType === 'modelA' ? '最大距离' : '远距 (Range 3)'}}</text>
+        <text class="value">{{params.range3}}m</text>
+      </view>
+      <slider min="0" max="10" step="0.1" value="{{params.range3}}" disabled="{{!isEditable}}" bindchange="onRange3Change" activeColor="#007aff"/>
+    </view>
+
+    <!-- Range 2 (Mid) - Only for Model B -->
+    <view class="slider-row" wx:if="{{hardwareType !== 'modelA'}}">
+      <view class="slider-info">
+        <text class="label">中距 (Range 2)</text>
+        <text class="value">{{params.range2}}m</text>
+      </view>
+      <slider min="0" max="10" step="0.1" value="{{params.range2}}" disabled="{{!isEditable}}" bindchange="onRange2Change" activeColor="#007aff"/>
+    </view>
+
+    <!-- Range 1 (Min/Near) -->
+    <view class="slider-row">
+      <view class="slider-info">
+        <text class="label">{{hardwareType === 'modelA' ? '最小距离' : '近距 (Range 1)'}}</text>
+        <text class="value">{{params.range1}}m</text>
+      </view>
+      <slider min="0" max="10" step="0.1" value="{{params.range1}}" disabled="{{!isEditable}}" bindchange="onRange1Change" activeColor="#007aff"/>
+    </view>
+  </view>
+
+  <!-- Advanced Settings -->
+  <view class="card">
+    <text class="card-title">高级设置</text>
+    
+    <view class="input-row">
+      <text class="label">离开延迟 (秒)</text>
+      <input type="number" value="{{params.exitDelay}}" disabled="{{!isEditable}}" bindinput="onExitDelayChange" class="input"/>
+    </view>
+    
+    <view class="input-row">
+      <text class="label">触发灵敏度</text>
+      <input type="number" value="{{params.sensitivity}}" disabled="{{!isEditable}}" bindinput="onSensitivityChange" class="input"/>
+    </view>
+  </view>
+
+  <!-- Action Buttons -->
+  <view class="action-buttons" wx:if="{{isEditable}}">
+    <button class="btn btn-primary" bindtap="saveSettings">保存设置</button>
+    <button class="btn btn-danger" bindtap="restoreSettings">恢复出厂</button>
+  </view>
+
+  <!-- Logs -->
+  <view class="card logs-card">
+    <text class="card-title">日志</text>
+    <scroll-view scroll-y class="logs-container">
+      <view wx:for="{{logs}}" wx:key="index" class="log-item">{{item}}</view>
+    </scroll-view>
+  </view>
+</view>

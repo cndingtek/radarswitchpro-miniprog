@@ -1,0 +1,82 @@
+.container {
+  padding: 20rpx;
+  background-color: #000;
+  min-height: 100vh;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30rpx;
+}
+
+.title {
+  font-size: 36rpx;
+  font-weight: bold;
+  color: #fff;
+}
+
+.loading {
+  font-size: 24rpx;
+  color: #888;
+}
+
+.device-list {
+  width: 100%;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 100rpx;
+  color: #888;
+}
+
+.scan-btn {
+  margin-top: 20rpx;
+  background-color: #007aff;
+  color: #fff;
+}
+
+.device-item {
+  background-color: #1c1c1e;
+  padding: 30rpx;
+  border-radius: 16rpx;
+  margin-bottom: 20rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.device-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.device-name {
+  font-size: 32rpx;
+  color: #fff;
+  font-weight: 500;
+  margin-bottom: 8rpx;
+}
+
+.device-id {
+  font-size: 24rpx;
+  color: #888;
+  margin-bottom: 4rpx;
+}
+
+.device-rssi {
+  font-size: 24rpx;
+  color: #666;
+}
+
+.connect-btn {
+  background-color: #2c2c2e;
+  padding: 12rpx 24rpx;
+  border-radius: 30rpx;
+  font-size: 24rpx;
+  color: #007aff;
+}
