@@ -1,5 +1,0 @@
-/* Privacy - Bluetooth Always Usage Description */
-"NSBluetoothAlwaysUsageDescription" = "此应用需要蓝牙权限来连接和配置雷达开关设备";
-
-/* Privacy - Bluetooth Peripheral Usage Description */
-"NSBluetoothPeripheralUsageDescription" = "此应用需要蓝牙权限来发现和连接附近的DC59X设备";

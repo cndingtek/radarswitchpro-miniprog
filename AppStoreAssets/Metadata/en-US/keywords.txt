@@ -1,1 +1,0 @@
-bluetooth,ble,debug,serial,scan,connect,log,iot,rssi,gatt,terminal
