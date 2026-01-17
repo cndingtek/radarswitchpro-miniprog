@@ -1,0 +1,5 @@
+/* Privacy - Bluetooth Always Usage Description */
+"NSBluetoothAlwaysUsageDescription" = "This app needs Bluetooth access to connect and configure radar switch devices";
+
+/* Privacy - Bluetooth Peripheral Usage Description */
+"NSBluetoothPeripheralUsageDescription" = "This app needs Bluetooth access to discover and connect to nearby DC59X devices";

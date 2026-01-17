@@ -12,6 +12,8 @@
 		1A2B3C4D5E6F7894 /* BLEManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7895 /* BLEManager.swift */; };
 		1A2B3C4D5E6F7896 /* DeviceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7897 /* DeviceModels.swift */; };
 		1A2B3C4D5E6F7904 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7905 /* Assets.xcassets */; };
+		1A2B3C4D5E6F79A0 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F79A6 /* InfoPlist.strings */; };
+		1A2B3C4D5E6F79A1 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F79A7 /* Localizable.strings */; };
 		1A2B3C4D5E6F7912 /* WheelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7911 /* WheelPicker.swift */; };
 		1A2B3C4D5E6F7913 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7914 /* SettingsView.swift */; };
 		1A2B3C4D5E6F7921 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7920 /* Theme.swift */; };
@@ -31,6 +33,10 @@
 		1A2B3C4D5E6F7897 /* DeviceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceModels.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F7905 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1A2B3C4D5E6F7908 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1A2B3C4D5E6F79A2 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		1A2B3C4D5E6F79A3 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
+		1A2B3C4D5E6F79A4 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		1A2B3C4D5E6F79A5 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 		1A2B3C4D5E6F7911 /* WheelPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WheelPicker.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F7914 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F7920 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
@@ -41,6 +47,25 @@
 		1A2B3C4D5E6F792A /* DeviceDetailParamsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDetailParamsView.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F792C /* DeviceDetailLogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDetailLogsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXVariantGroup section */
+		1A2B3C4D5E6F79A6 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				1A2B3C4D5E6F79A2 /* en */,
+			);
+			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F79A7 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				1A2B3C4D5E6F79A4 /* en */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		1A2B3C4D5E6F787D /* Frameworks */ = {
@@ -53,6 +78,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1A2B3C4D5E6F79A8 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F79A7 /* Localizable.strings */,
+				1A2B3C4D5E6F79A6 /* InfoPlist.strings */,
+			);
+			name = Resources;
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		1A2B3C4D5E6F7877 = {
 			isa = PBXGroup;
 			children = (
@@ -87,6 +122,7 @@
 				1A2B3C4D5E6F7911 /* WheelPicker.swift */,
 				1A2B3C4D5E6F7905 /* Assets.xcassets */,
 				1A2B3C4D5E6F7908 /* Info.plist */,
+				1A2B3C4D5E6F79A8 /* Resources */,
 			);
 			path = RadarSwitch;
 			sourceTree = "<group>";
@@ -131,6 +167,8 @@
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
+				zh-Hans,
+
 				en,
 				Base,
 			);
@@ -150,6 +188,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				1A2B3C4D5E6F7904 /* Assets.xcassets in Resources */,
+				1A2B3C4D5E6F79A0 /* InfoPlist.strings in Resources */,
+				1A2B3C4D5E6F79A1 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -310,20 +350,18 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 94VV8QL5LC;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RadarSwitch/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = RadarSwitch;
-				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "此应用需要蓝牙权限来连接和配置雷达开关设备";
-				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "此应用需要蓝牙权限来发现和连接附近的DC59X设备";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save QR code image to Photos";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIRequiredDeviceCapabilities = "armv7 bluetooth-le";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save QR code image to Photos";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -346,20 +384,18 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 94VV8QL5LC;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RadarSwitch/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = RadarSwitch;
-				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "此应用需要蓝牙权限来连接和配置雷达开关设备";
-				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "此应用需要蓝牙权限来发现和连接附近的DC59X设备";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save QR code image to Photos";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIRequiredDeviceCapabilities = "armv7 bluetooth-le";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save QR code image to Photos";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

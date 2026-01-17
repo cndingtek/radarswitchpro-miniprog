@@ -22,10 +22,16 @@ class BLEManager {
     // Protocol State
     this.hardwareType = 'unknown'; // 'modelA' or 'modelB'
     this.handshakeCompleted = false;
+    this.hasShownModelAToast = false;
+    this.hasShownModelBToast = false;
+    this.lastAParamId = null;
     this.pendingCommands = [];
     this.pendingBinaryCommands = [];
     this.isSending = false;
     this.lineBuffer = "";
+    
+    // Mock Mode
+    this.mockMode = false; // Set to true to enable simulation on Mac
     
     // Parameters
     this.deviceParams = {
@@ -41,15 +47,89 @@ class BLEManager {
   }
 
   init() {
+    // Check if we are in dev tools
+    try {
+        const res = wx.getSystemInfoSync();
+        if (res.platform === 'devtools') {
+            this.log('Detected DevTools environment. Enabling Mock Mode.');
+            this.mockMode = true;
+            return Promise.resolve();
+        }
+    } catch (e) {}
+
+    return new Promise(async (resolve, reject) => {
+      try {
+        const sys = wx.getSystemInfoSync();
+        if (sys.platform === 'android') {
+          await this.ensureAndroidLocationPermission();
+        }
+
+        await this.openAdapterWithPrompt();
+        this.monitorState();
+        // Verify adapter state
+        wx.getBluetoothAdapterState({
+          success: (s) => {
+            if (!s.available) {
+              this.log('Bluetooth unavailable after open, ask user to enable');
+              wx.showModal({
+                title: '请打开蓝牙',
+                content: '请在系统设置中开启蓝牙后重试',
+                showCancel: false
+              });
+              reject({ msg: 'bluetooth unavailable' });
+              return;
+            }
+            resolve(s);
+          },
+          fail: (e) => {
+            this.log('Get adapter state failed: ' + JSON.stringify(e));
+            resolve({});
+          }
+        });
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  ensureAndroidLocationPermission() {
+    return new Promise((resolve) => {
+      wx.getSetting({
+        success: (st) => {
+          if (!st.authSetting['scope.userLocation']) {
+            wx.authorize({
+              scope: 'scope.userLocation',
+              success: () => resolve(true),
+              fail: () => {
+                wx.showModal({
+                  title: '需要位置权限',
+                  content: 'Android 扫描蓝牙需要开启定位权限，请授权后重试',
+                  success: () => {
+                    wx.openSetting({ success: () => resolve(true) });
+                  }
+                });
+              }
+            });
+          } else {
+            resolve(true);
+          }
+        },
+        fail: () => resolve(true)
+      });
+    });
+  }
+
+  openAdapterWithPrompt() {
     return new Promise((resolve, reject) => {
       wx.openBluetoothAdapter({
-        success: (res) => {
-          this.log('Bluetooth Adapter initialized');
-          this.monitorState();
-          resolve(res);
-        },
+        success: (res) => resolve(res),
         fail: (err) => {
           this.log('Bluetooth Init failed: ' + JSON.stringify(err));
+          wx.showModal({
+            title: '蓝牙不可用',
+            content: '请确认系统蓝牙已开启，且授予应用蓝牙权限后重试',
+            showCancel: false
+          });
           reject(err);
         }
       });
@@ -81,6 +161,37 @@ class BLEManager {
     this.isScanning = true;
     if (this.onDevicesUpdated) this.onDevicesUpdated(this.discoveredDevices);
 
+    if (this.mockMode) {
+        this.log('Starting Mock Scan...');
+        setTimeout(() => {
+            const mockDevice = {
+                deviceId: 'MOCK-DEVICE-001',
+                name: 'CNDingtek Radar (Mock)',
+                RSSI: -55,
+                advertisData: new ArrayBuffer(0)
+            };
+            this.handleDiscoveredDevice(mockDevice);
+        }, 1500);
+        return;
+    }
+
+    wx.getBluetoothAdapterState({
+      success: (s) => {
+        if (!s.available) {
+          this.log('Bluetooth unavailable');
+          wx.showToast({ title: '请先开启手机蓝牙', icon: 'none' });
+          this.isScanning = false;
+          return;
+        }
+        this._doDiscovery();
+      },
+      fail: () => {
+        this._doDiscovery();
+      }
+    });
+  }
+
+  _doDiscovery() {
     wx.startBluetoothDevicesDiscovery({
       allowDuplicatesKey: false,
       success: () => {
@@ -100,6 +211,13 @@ class BLEManager {
 
   stopScan() {
     if (!this.isScanning) return;
+    
+    if (this.mockMode) {
+        this.isScanning = false;
+        this.log('Mock Scanning stopped');
+        return;
+    }
+
     wx.stopBluetoothDevicesDiscovery({
       success: () => {
         this.isScanning = false;
@@ -129,6 +247,30 @@ class BLEManager {
     this.stopScan();
     this.log(`Connecting to ${device.name} (${device.deviceId})...`);
     
+    if (this.mockMode) {
+        setTimeout(() => {
+            this.deviceId = device.deviceId;
+            this.connectedDevice = device;
+            this.log('Mock Connected. Discovering services...');
+            setTimeout(() => {
+                this.log('Mock Services Discovered');
+                this.log('Mock Characteristics Discovered');
+                this.log('Mock Notification enabled');
+                if (this.onStateChanged) this.onStateChanged(true);
+                
+                // Simulate initial handshake/read
+                this.hardwareType = 'modelB';
+                this.deviceParams = {
+                    range1: 2.5, range2: 4.0, range3: 6.0,
+                    sensitivity: 75, enterDelay: 5, exitDelay: 30
+                };
+                if (this.onParamsLoaded) this.onParamsLoaded(this.deviceParams);
+                this.log('Mock Params Loaded');
+            }, 1000);
+        }, 1000);
+        return;
+    }
+
     wx.createBLEConnection({
       deviceId: device.deviceId,
       success: () => {
@@ -251,6 +393,20 @@ class BLEManager {
       this.sendRaw("AA\r\n");
   }
 
+  getToastMsg(type) {
+      try {
+          const sys = wx.getSystemInfoSync();
+          const isZh = sys.language && sys.language.indexOf('zh') !== -1;
+          if (type === 'A') {
+              return isZh ? '雷达类型:A' : 'Model A';
+          } else {
+              return isZh ? '雷达类型:B' : 'Model B';
+          }
+      } catch (e) {
+          return type === 'A' ? 'Model A' : 'Model B';
+      }
+  }
+
   handleValueChange(buffer) {
     // buffer is ArrayBuffer
     const dataView = new DataView(buffer);
@@ -264,6 +420,10 @@ class BLEManager {
         const h4 = dataView.getUint8(3);
         if (h1 === 0xFD && h2 === 0xFC && h3 === 0xFB && h4 === 0xFA) {
             this.hardwareType = 'modelA';
+            if (!this.hasShownModelAToast) {
+                wx.showToast({ title: this.getToastMsg('A'), icon: 'none', duration: 1500 });
+                this.hasShownModelAToast = true;
+            }
             this.handleBinaryData(buffer);
             return;
         }
@@ -291,8 +451,39 @@ class BLEManager {
   }
   
   handleTextLine(line) {
-      this.log('RX: ' + line);
+      let displayMsg = 'RX: ' + line;
+      if (line.includes("Range")) {
+          const match = line.match(/Range\s*(\d+(\.\d+)?)/i);
+          if (match) {
+             displayMsg = `距离 ${match[1]}cm`;
+          }
+      } else if (line.trim() === "ON") {
+          displayMsg = "检测到运动";
+      } else if (line.trim() === "OFF") {
+          displayMsg = "无目标";
+      }
+      this.log(displayMsg);
+
+      if (line.includes("Range")) {
+          if (this.hardwareType !== 'modelA') {
+              this.hardwareType = 'modelA';
+              if (!this.hasShownModelAToast) {
+                  wx.showToast({ title: this.getToastMsg('A'), icon: 'none', duration: 1500 });
+                  this.hasShownModelAToast = true;
+              }
+              this.notifyParamsUpdate();
+          }
+          // Optional: Parse Range value
+          return;
+      }
+      
       this.hardwareType = 'modelB';
+      if (line.includes("OK") || line.startsWith("+R") || line.startsWith("+ONTH") || line.startsWith("+SENS")) {
+          if (!this.hasShownModelBToast) {
+              wx.showToast({ title: this.getToastMsg('B'), icon: 'none', duration: 1500 });
+              this.hasShownModelBToast = true;
+          }
+      }
       
       if (line.includes("OK")) {
           // Handshake or Command success
@@ -321,14 +512,27 @@ class BLEManager {
   }
   
   handleBinaryData(buffer) {
-      // Implement Model A parsing if needed
-      // Based on Swift handleBinaryA
       const bytes = new Uint8Array(buffer);
       if (bytes.length < 12) return;
       
       const cmdLo = bytes[6];
       const cmdHi = bytes[7];
-      // ... logic
+      const statusLo = bytes[8];
+      
+      if (cmdLo === 0x08 && cmdHi === 0x01 && statusLo === 0x00) {
+          const val = bytes[10];
+          if (this.lastAParamId !== null) {
+              if (this.lastAParamId === 0x0001) { // Max
+                  this.deviceParams.range2 = val * 0.75;
+              } else if (this.lastAParamId === 0x0000) { // Min
+                  this.deviceParams.range1 = val * 0.75;
+              } else if (this.lastAParamId === 0x0004) { // Delay
+                  this.deviceParams.exitDelay = val;
+              }
+              this.notifyParamsUpdate();
+              this.lastAParamId = null;
+          }
+      }
       
       this.isSending = false;
       this.processQueue();
@@ -340,16 +544,44 @@ class BLEManager {
       }
   }
 
-  sendRaw(str) {
+  sendRaw(data) {
+    if (this.mockMode) {
+        const msg = (typeof data === 'string') ? data.trim() : 'BINARY [' + data.byteLength + ']';
+        this.log(`[MOCK TX] ${msg}`);
+        this.isSending = false;
+        if (typeof data === 'string' && data.includes("?")) {
+             setTimeout(() => { this.processQueue(); }, 100);
+        } else if (typeof data !== 'string') {
+             setTimeout(() => { this.processQueue(); }, 100);
+        }
+        return;
+    }
+
     if (!this.deviceId || !this.writeCharacteristicId) return;
     
-    const buffer = new ArrayBuffer(str.length);
-    const dataView = new DataView(buffer);
-    for (let i = 0; i < str.length; i++) {
-      dataView.setUint8(i, str.charCodeAt(i));
+    let buffer;
+    if (typeof data === 'string') {
+        buffer = new ArrayBuffer(data.length);
+        const dataView = new DataView(buffer);
+        for (let i = 0; i < data.length; i++) {
+            dataView.setUint8(i, data.charCodeAt(i));
+        }
+    } else {
+        buffer = data;
     }
 
     this.write(buffer);
+    
+    // Track Model A Read Request
+    if (this.hardwareType === 'modelA' && buffer.byteLength >= 10) {
+        const bytes = new Uint8Array(buffer);
+        // Command 0x08 0x00 is Read
+        if (bytes[6] === 0x08 && bytes[7] === 0x00) {
+             const idLo = bytes[8];
+             const idHi = bytes[9];
+             this.lastAParamId = (idHi << 8) | idLo;
+        }
+    }
   }
   
   write(buffer) {
@@ -391,19 +623,57 @@ class BLEManager {
   }
   
   readParameters() {
-      // Model B read sequence
-      this.queueCommand("AT+R1?\r\n");
-      this.queueCommand("AT+R2?\r\n");
-      this.queueCommand("AT+R3?\r\n");
-      this.queueCommand("AT+ONTH?\r\n");
+      if (this.hardwareType === 'modelA') {
+          // Model A Read Sequence
+          const cmdMax = new Uint8Array([0xFD,0xFC,0xFB,0xFA,0x04,0x00,0x08,0x00,0x01,0x00,0x04,0x03,0x02,0x01]);
+          const cmdMin = new Uint8Array([0xFD,0xFC,0xFB,0xFA,0x04,0x00,0x08,0x00,0x00,0x00,0x04,0x03,0x02,0x01]);
+          const cmdDelay = new Uint8Array([0xFD,0xFC,0xFB,0xFA,0x04,0x00,0x08,0x00,0x04,0x00,0x04,0x03,0x02,0x01]);
+          this.queueCommand(cmdMax.buffer);
+          this.queueCommand(cmdMin.buffer);
+          this.queueCommand(cmdDelay.buffer);
+      } else {
+          // Model B Read Sequence
+          this.queueCommand("AT+R1?\r\n");
+          this.queueCommand("AT+R2?\r\n");
+          this.queueCommand("AT+R3?\r\n");
+          this.queueCommand("AT+ONTH?\r\n");
+          this.queueCommand("AT+SENS?\r\n");
+      }
   }
-  
+
   saveParameters(params) {
-      // Model B save sequence
-      this.queueCommand(`AT+R1=${Math.round(params.range1 * 100)}\r\n`);
-      this.queueCommand(`AT+R2=${Math.round(params.range2 * 100)}\r\n`);
-      this.queueCommand(`AT+R3=${Math.round(params.range3 * 100)}\r\n`);
-      // ...
+      if (this.hardwareType === 'modelA') {
+          // 1. Enter Config
+          this.queueCommand(new Uint8Array([0xFD,0xFC,0xFB,0xFA,0x04,0x00,0xFF,0x00,0x01,0x00,0x04,0x03,0x02,0x01]).buffer);
+          
+          const minVal = Math.max(0, Math.round(params.range1 / 0.75));
+          const maxVal = Math.max(0, Math.round(params.range2 / 0.75)); 
+          const delayVal = Math.max(0, Math.min(255, params.exitDelay));
+          
+          // 2. Set Min (0x0000)
+          const cmdMin = new Uint8Array([0xFD,0xFC,0xFB,0xFA,0x0E,0x00,0x07,0x00,0x00,0x00,minVal,0x00,0x00,0x00,0x2F,0x00,0x64,0x00,0x00,0x00,0x04,0x03,0x02,0x01]);
+          this.queueCommand(cmdMin.buffer);
+          
+          // 3. Set Max (0x0001)
+          const cmdMax = new Uint8Array([0xFD,0xFC,0xFB,0xFA,0x0E,0x00,0x07,0x00,0x01,0x00,maxVal,0x00,0x00,0x00,0x2F,0x00,0x64,0x00,0x00,0x00,0x04,0x03,0x02,0x01]);
+          this.queueCommand(cmdMax.buffer);
+          
+          // 4. Set Delay (0x0004)
+          const cmdDelay = new Uint8Array([0xFD,0xFC,0xFB,0xFA,0x0E,0x00,0x07,0x00,0x04,0x00,delayVal,0x00,0x00,0x00,0x2F,0x00,0x64,0x00,0x00,0x00,0x04,0x03,0x02,0x01]);
+          this.queueCommand(cmdDelay.buffer);
+          
+          // 5. Exit Config
+          this.queueCommand(new Uint8Array([0xFD,0xFC,0xFB,0xFA,0x02,0x00,0xFE,0x00,0x04,0x03,0x02,0x01]).buffer);
+          
+      } else {
+          // Model B
+          this.queueCommand(`AT+R1=${Math.round(params.range1 * 100)}\r\n`);
+          this.queueCommand(`AT+R2=${Math.round(params.range2 * 100)}\r\n`);
+          this.queueCommand(`AT+R3=${Math.round(params.range3 * 100)}\r\n`);
+          this.queueCommand(`AT+ONTH=${params.exitDelay}\r\n`);
+          this.queueCommand(`AT+SENS=${params.sensitivity}\r\n`);
+          this.queueCommand("AT+RESET\r\n");
+      }
   }
 }
 

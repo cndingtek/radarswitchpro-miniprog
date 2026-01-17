@@ -1,4 +1,7 @@
 {
   "navigationBarTitleText": "Radar Switch",
-  "enablePullDownRefresh": true
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "ui-button": "/components/ui-button/ui-button"
+  }
 }

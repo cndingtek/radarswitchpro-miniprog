@@ -1,4 +1,8 @@
 {
   "navigationBarTitleText": "Device Settings",
-  "usingComponents": {}
+  "usingComponents": {
+    "ui-button": "/components/ui-button/ui-button",
+    "ui-status": "/components/ui-status/ui-status",
+    "multi-slider": "/components/multi-slider/multi-slider"
+  }
 }

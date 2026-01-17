@@ -1,15 +1,17 @@
 .container {
-  padding: 20rpx;
+  padding: 32rpx;
   background-color: #000;
   min-height: 100vh;
   padding-bottom: 40rpx;
 }
 
 .card {
-  background-color: #1c1c1e;
-  border-radius: 16rpx;
-  padding: 30rpx;
-  margin-bottom: 30rpx;
+  background-color: #0C2343;
+  border-radius: 20rpx;
+  padding: 32rpx;
+  margin-bottom: 28rpx;
+  box-shadow: 0 6rpx 16rpx rgba(0,0,0,0.35);
+  border: 1rpx solid #3A3A3C;
 }
 
 .card-header {
@@ -20,8 +22,6 @@
 }
 
 .card-title {
-  font-size: 32rpx;
-  font-weight: 600;
   color: #fff;
   display: block;
   margin-bottom: 20rpx;
@@ -37,12 +37,13 @@
 .toggle-btn {
   padding: 10rpx 24rpx;
   font-size: 24rpx;
-  color: #888;
-  border-radius: 8rpx;
+  color: #D1D1D6;
+  border-radius: 12rpx;
+  background-color: #3A3A3C;
 }
 
 .toggle-btn.active {
-  background-color: #007aff;
+  background-color: #0A84FF;
   color: #fff;
 }
 
@@ -52,30 +53,22 @@
 }
 
 .status-text {
-  font-size: 24rpx;
-  color: #888;
+  color: #9BA7C8;
   margin-left: 10rpx;
 }
 
-.slider-row {
+.slider-wrapper {
+  padding: 20rpx 0;
+}
+
+.values-row {
+  display: flex;
+  justify-content: space-between;
   margin-bottom: 30rpx;
 }
 
-.slider-info {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 10rpx;
-}
-
 .label {
-  font-size: 28rpx;
   color: #ccc;
-}
-
-.value {
-  font-size: 28rpx;
-  color: #007aff;
-  font-weight: bold;
 }
 
 .input-row {
@@ -95,23 +88,8 @@
 .action-buttons {
   margin-top: 40rpx;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 20rpx;
-}
-
-.btn {
-  width: 100%;
-  border-radius: 16rpx;
-}
-
-.btn-primary {
-  background-color: #007aff;
-  color: #fff;
-}
-
-.btn-danger {
-  background-color: #ff3b30;
-  color: #fff;
 }
 
 .logs-card {
@@ -120,7 +98,7 @@
 
 .logs-container {
   height: 300rpx;
-  background-color: #000;
+  background-color: #0C2343;
   border-radius: 8rpx;
   padding: 10rpx;
   margin-top: 20rpx;
@@ -128,7 +106,7 @@
 
 .log-item {
   font-size: 20rpx;
-  color: #0f0;
+  color: #9BA7C8;
   font-family: monospace;
   margin-bottom: 4rpx;
 }

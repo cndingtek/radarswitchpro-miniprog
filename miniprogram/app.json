@@ -6,8 +6,8 @@
   ],
   "window": {
     "backgroundTextStyle": "light",
-    "navigationBarBackgroundColor": "#1c1c1e",
-    "navigationBarTitleText": "RadarSwitch",
+    "navigationBarBackgroundColor": "#050F24",
+    "navigationBarTitleText": "雷达开关助手专业版",
     "navigationBarTextStyle": "white"
   },
   "style": "v2",

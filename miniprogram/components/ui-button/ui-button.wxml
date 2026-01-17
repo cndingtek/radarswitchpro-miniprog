@@ -1,0 +1,3 @@
+<button class="btn {{'btn-' + type}} {{size === 'sm' ? 'btn-sm' : 'btn-md'}} {{block ? 'btn-block' : ''}} {{disabled ? 'btn-disabled' : ''}}" bindtap="onTap" disabled="{{disabled}}">
+  {{text}}
+</button>

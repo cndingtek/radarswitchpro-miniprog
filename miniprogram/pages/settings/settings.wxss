@@ -1,14 +1,15 @@
 .container {
-  padding: 20rpx;
+  padding: 32rpx;
   background-color: #000;
   min-height: 100vh;
 }
 
 .list-group {
   background-color: #1c1c1e;
-  border-radius: 16rpx;
+  border-radius: 20rpx;
   overflow: hidden;
   margin-top: 20rpx;
+  box-shadow: 0 6rpx 16rpx rgba(0,0,0,0.35);
 }
 
 .list-item {
@@ -25,17 +26,14 @@
 
 .item-label {
   color: #fff;
-  font-size: 32rpx;
 }
 
 .item-value {
   color: #888;
-  font-size: 28rpx;
 }
 
 .footer {
   margin-top: 60rpx;
   text-align: center;
   color: #666;
-  font-size: 24rpx;
 }

@@ -1,16 +1,16 @@
-<view class="container">
-  <view class="list-group">
+<view class="container safe-area-btm bg-system-background">
+  <view class="list-group bg-secondary-system-background">
     <view class="list-item">
-      <text class="item-label">语言</text>
-      <text class="item-value">简体中文</text>
+      <text class="item-label typ-body text-label">语言</text>
+      <text class="item-value typ-caption text-secondary-label">简体中文</text>
     </view>
     <view class="list-item">
-      <text class="item-label">版本</text>
-      <text class="item-value">1.0.0</text>
+      <text class="item-label typ-body text-label">版本</text>
+      <text class="item-value typ-caption text-secondary-label">1.0.0</text>
     </view>
   </view>
 
   <view class="footer">
-    <text>© 2024 CNDingtek. All rights reserved.</text>
+    <text class="typ-footnote text-secondary-label">© 2024 CNDingtek. All rights reserved.</text>
   </view>
 </view>

@@ -1,0 +1,33 @@
+<view class="slider-container" id="slider-container">
+  <!-- Track Background -->
+  <view class="track-bg"></view>
+  
+  <!-- Colored Segments for Model A -->
+  <block wx:if="{{mode === 'modelA' && handles.length >= 2}}">
+    <!-- 0 to Min: Gray -->
+    <view class="segment segment-gray" style="left: 0; width: {{handles[0].x}}px;"></view>
+    <!-- Min to Max: Blue -->
+    <view class="segment segment-blue" style="left: {{handles[0].x}}px; width: {{handles[1].x - handles[0].x}}px;"></view>
+    <!-- Max to End: Gray -->
+    <view class="segment segment-gray" style="left: {{handles[1].x}}px; right: 0;"></view>
+  </block>
+  
+  <!-- Colored Segments for Model B (All Blue) -->
+  <block wx:if="{{mode === 'modelB'}}">
+    <view class="segment segment-blue" style="left: 0; right: 0;"></view>
+  </block>
+
+  <!-- Handles -->
+  <view 
+    wx:for="{{handles}}" 
+    wx:key="index"
+    class="handle"
+    style="left: {{item.x}}px;"
+    data-index="{{index}}"
+    catchtouchstart="onTouchStart"
+    catchtouchmove="onTouchMove"
+    catchtouchend="onTouchEnd"
+  >
+    <!-- Tooltip can be added here or outside -->
+  </view>
+</view>

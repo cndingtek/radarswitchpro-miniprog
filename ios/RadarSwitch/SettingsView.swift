@@ -147,7 +147,8 @@ struct SettingsView: View {
                             HStack(spacing: 4) {
                                 Text(appLanguage == "zh-Hans" ? "网站：" : "Website: ")
                                     .foregroundColor(AppColors.textSecondary)
-                                Link("www.dingtek.com", destination: URL(string: "https://www.dingtek.com")!)
+                                Link(appLanguage == "zh-Hans" ? "www.dingtek.com.cn" : "www.dingtek.com",
+                                     destination: URL(string: appLanguage == "zh-Hans" ? "https://www.dingtek.com.cn" : "https://www.dingtek.com")!)
                                     .foregroundColor(AppColors.primaryBlue)
                                     .underline(true)
                             }

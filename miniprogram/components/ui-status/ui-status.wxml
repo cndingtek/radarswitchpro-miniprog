@@ -1,0 +1,4 @@
+<view class="status">
+  <icon type="{{iconType}}" size="{{size}}" color="{{color}}" />
+  <text class="status-text">{{text}}</text>
+</view>

@@ -1,0 +1,6 @@
+.badge { padding: 6rpx 12rpx; border-radius: 20rpx; font-size: 22rpx; }
+.badge-online { background-color: #34C759; color: #fff; }
+.badge-offline { background-color: #FF9F0A; color: #fff; }
+.badge-warn { background-color: #FFCC00; color: #000; }
+.badge-info { background-color: #0A84FF; color: #fff; }
+.badge-error { background-color: #FF3B30; color: #fff; }

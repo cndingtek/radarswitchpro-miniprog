@@ -8,7 +8,19 @@ Page({
   },
 
   onLoad() {
+    this.updateTitle();
     this.initBLE();
+  },
+
+  updateTitle() {
+    try {
+        const sys = wx.getSystemInfoSync();
+        const isZh = sys.language && sys.language.indexOf('zh') !== -1;
+        const title = isZh ? "雷达开关助手专业版" : "RadarSwitch Pro";
+        wx.setNavigationBarTitle({ title });
+    } catch (e) {
+        console.error(e);
+    }
   },
 
   onShow() {

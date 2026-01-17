@@ -1,0 +1,22 @@
+.btn {
+  width: 100%;
+  border-radius: 16rpx;
+  padding: 16rpx 28rpx;
+  font-size: 26rpx;
+}
+.btn-sm {
+  padding: 12rpx 24rpx;
+  font-size: 24rpx;
+}
+.btn-md {
+  padding: 16rpx 28rpx;
+}
+.btn-block { width: 100%; }
+.btn-disabled { opacity: 0.6; }
+.btn-primary { background-color: #0A84FF; color: #fff; }
+.btn-primary:active { background-color: #0071e3; }
+.btn-danger { background-color: #2C2C2E; color: #FF453A; }
+.btn-secondary { background-color: #3A3A3C; color: #D1D1D6; }
+.btn-secondary:active { background-color: #48484a; }
+.btn-custom { background-color: #3A3A3C; color: #D1D1D6; }
+.btn-custom:active { background-color: #0A84FF; color: #fff; }

@@ -2,7 +2,7 @@
   "miniprogramRoot": "miniprogram/",
   "projectname": "RadarSwitchPro",
   "description": "Radar Switch Pro Mini Program",
-  "appid": "touristappid",
+  "appid": "wx9c11fe5cba736716",
   "setting": {
     "urlCheck": true,
     "es6": true,
@@ -36,10 +36,22 @@
     "userConfirmedUseCompilerModuleSwitch": false,
     "appLaunchInfo": {
       "scene": 1001
-    }
+    },
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "condition": false,
+    "swc": false,
+    "disableSWC": true
   },
   "compileType": "miniprogram",
-  "libVersion": "2.19.4",
+  "libVersion": "3.13.1",
   "srcMiniprogramRoot": "miniprogram/",
   "packOptions": {
     "ignore": [],
@@ -48,5 +60,6 @@
   "editorSetting": {
     "tabIndent": "insertSpaces",
     "tabSize": 2
-  }
+  },
+  "simulatorPluginLibVersion": {}
 }
