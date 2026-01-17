@@ -19,7 +19,8 @@
     *   **Model B**：支持近距、中距、远距（三滑块调节）、离开延迟、灵敏度设置。
 *   **日志监控**：
     *   实时显示设备返回数据。
-    *   智能解析：自动将 `Range xx` 解析为距离（cm），`ON` 解析为“检测到运动”，`OFF` 解析为“无目标”。
+    *   **智能解析 (Model A)**：`Range xx` -> 距离xxcm，`ON` -> 检测到运动，`OFF` -> 无目标。
+    *   **智能解析 (Model B)**：`0` -> 无目标，`1,xxcm,yy` -> 检测到运动，距离xxcm，`2,xxcm,yy` -> 检测到微动，距离xxcm。
 *   **一键维护**：
     *   **保存设置**：将当前参数写入设备。
     *   **恢复出厂**：一键重置设备参数（默认：最小0m，最大3m，延迟10s）。
@@ -57,7 +58,8 @@ WeChat Mini Program for configuring CNDingtek Radar Switch devices. Supports BLE
     *   **Model B**: Near, Mid, Far Distance (Triple Slider), Exit Delay, Sensitivity.
 *   **Log Monitoring**:
     *   Real-time data logs.
-    *   Smart Parsing: Parses `Range xx` to distance, `ON` to Motion Detected, `OFF` to No Target.
+    *   **Smart Parsing (Model A)**: `Range xx` -> distance xxcm, `ON` -> motion detected, `OFF` -> no object.
+    *   **Smart Parsing (Model B)**: `0` -> no object, `1,xxcm,yy` -> motion detected, distance xxcm, `2,xxcm,yy` -> presence detected, distance xxcm.
 *   **Maintenance**:
     *   **Save Settings**: Write parameters to device.
     *   **Restore Defaults**: Reset parameters (Min 0m, Max 3m, Delay 10s).
